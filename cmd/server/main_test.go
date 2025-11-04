@@ -1,7 +1,6 @@
 package main
 
 import (
-    "errors"
     "net/http"
     "net/http/httptest"
     "strconv"
