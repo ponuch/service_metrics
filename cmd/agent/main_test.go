@@ -38,45 +38,48 @@ func TestAgentCollectMetrics(t *testing.T) {
 }
 
 // TestAgentSendMetric тестирует отправку метрики
-// func TestAgentSendMetric(t *testing.T) {
-//     // Создаем тестовый сервер
-//     server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-//         if r.Method != "POST" {
-//             t.Errorf("Expected POST request, got %s", r.Method)
-//         }
+func TestAgentSendMetric(t *testing.T) {
+    // Создаем тестовый сервер
+    server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if r.Method != "POST" {
+            t.Errorf("Expected POST request, got %s", r.Method)
+        }
+
+		validUrl := (r.URL.Path == "/update/gauge/testMetric/123.456") || (r.URL.Path == "/update/counter/testCounter/42")
+
+		if validUrl == false {
+			t.Errorf("Unexpected path: %s", r.URL.Path)
+		}
         
-//         if r.URL.Path != "/update/gauge/testMetric/123.456" {
-//             t.Errorf("Unexpected path: %s", r.URL.Path)
-//         }
         
-//         if r.Header.Get("Content-Type") != "text/plain" {
-//             t.Errorf("Unexpected Content-Type: %s", r.Header.Get("Content-Type"))
-//         }
+        if r.Header.Get("Content-Type") != "text/plain" {
+            t.Errorf("Unexpected Content-Type: %s", r.Header.Get("Content-Type"))
+        }
         
-//         w.WriteHeader(http.StatusOK)
-//     }))
-//     defer server.Close()
+        w.WriteHeader(http.StatusOK)
+    }))
+    defer server.Close()
     
-//     cfg := Config{
-//         PollInterval:   1 * time.Second,
-//         ReportInterval: 5 * time.Second,
-//         ServerURL:      server.URL,
-//     }
+    cfg := Config{
+        PollInterval:   1 * time.Second,
+        ReportInterval: 5 * time.Second,
+        ServerURL:      server.URL,
+    }
     
-//     agent := NewAgent(cfg)
+    agent := NewAgent(cfg)
     
-//     // Тестируем отправку gauge метрики
-//     err := agent.sendMetric("gauge", "testMetric", 123.456)
-//     if err != nil {
-//         t.Errorf("Failed to send gauge metric: %v", err)
-//     }
+    // Тестируем отправку gauge метрики
+    err := agent.sendMetric("gauge", "testMetric", 123.456)
+    if err != nil {
+        t.Errorf("Failed to send gauge metric: %v", err)
+    }
     
-//     // Тестируем отправку counter метрики
-//     err = agent.sendMetric("counter", "testCounter", int64(42))
-//     if err != nil {
-//         t.Errorf("Failed to send counter metric: %v", err)
-//     }
-// }
+    // Тестируем отправку counter метрики
+    err = agent.sendMetric("counter", "testCounter", int64(42))
+    if err != nil {
+        t.Errorf("Failed to send counter metric: %v", err)
+    }
+}
 
 // TestAgentSendMetrics тестирует отправку всех метрик
 func TestAgentSendMetrics(t *testing.T) {
