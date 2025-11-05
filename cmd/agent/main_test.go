@@ -45,9 +45,9 @@ func TestAgentSendMetric(t *testing.T) {
             t.Errorf("Expected POST request, got %s", r.Method)
         }
 
-		validUrl := (r.URL.Path == "/update/gauge/testMetric/123.456") || (r.URL.Path == "/update/counter/testCounter/42")
+		validURL := (r.URL.Path == "/update/gauge/testMetric/123.456") || (r.URL.Path == "/update/counter/testCounter/42")
 
-		if validUrl == false {
+		if validURL == false {
 			t.Errorf("Unexpected path: %s", r.URL.Path)
 		}
         
