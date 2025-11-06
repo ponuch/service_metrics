@@ -1,10 +1,12 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
 	"runtime"
 	"strconv"
 	"time"
@@ -12,9 +14,46 @@ import (
 
 // Config конфигурация агента
 type Config struct {
+	ServerURL      string
 	PollInterval   time.Duration
 	ReportInterval time.Duration
-	ServerURL      string
+}
+
+// parseAgentFlags парсит флаги агента
+func parseAgentFlags() Config {
+	cfg := Config{
+		ServerURL:      "http://localhost:8080",
+		PollInterval:   2 * time.Second,
+		ReportInterval: 10 * time.Second,
+	}
+
+	var pollIntervalSec, reportIntervalSec int
+
+	flag.StringVar(&cfg.ServerURL, "a", cfg.ServerURL, "HTTP server endpoint address")
+	flag.IntVar(&reportIntervalSec, "r", 10, "Report interval in seconds")
+	flag.IntVar(&pollIntervalSec, "p", 2, "Poll interval in seconds")
+
+	// Проверяем неизвестные флаги
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
+		flag.PrintDefaults()
+		fmt.Fprintf(flag.CommandLine.Output(), "\nUnknown flags will cause the application to exit with an error.\n")
+	}
+
+	flag.Parse()
+
+	// Проверяем наличие неизвестных аргументов
+	if len(flag.Args()) > 0 {
+		fmt.Fprintf(flag.CommandLine.Output(), "Error: unknown flags or arguments: %v\n", flag.Args())
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	// Преобразуем секунды в Duration
+	cfg.PollInterval = time.Duration(pollIntervalSec) * time.Second
+	cfg.ReportInterval = time.Duration(reportIntervalSec) * time.Second
+
+	return cfg
 }
 
 // Agent структура агента
@@ -152,8 +191,10 @@ func (a *Agent) Run() {
 	defer pollTicker.Stop()
 	defer reportTicker.Stop()
 	
-	log.Printf("Agent started with poll interval %v and report interval %v", 
-		a.config.PollInterval, a.config.ReportInterval)
+	log.Printf("Agent started with:")
+	log.Printf("  Server URL: %s", a.config.ServerURL)
+	log.Printf("  Poll interval: %v", a.config.PollInterval)
+	log.Printf("  Report interval: %v", a.config.ReportInterval)
 	
 	for {
 		select {
@@ -169,12 +210,7 @@ func (a *Agent) Run() {
 }
 
 func main() {
-	cfg := Config{
-		PollInterval:   2 * time.Second,
-		ReportInterval: 10 * time.Second,
-		ServerURL:      "http://localhost:8080",
-	}
-	
+	cfg := parseAgentFlags()
 	agent := NewAgent(cfg)
 	agent.Run()
 }

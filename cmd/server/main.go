@@ -2,9 +2,12 @@ package main
 
 import (
 	"errors"
+	"flag"
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -15,6 +18,38 @@ const (
 	Gauge   = "gauge"
 	Counter = "counter"
 )
+
+// Config конфигурация сервера
+type Config struct {
+	Addr string
+}
+
+// parseServerFlags парсит флаги сервера
+func parseServerFlags() Config {
+	cfg := Config{
+		Addr: "localhost:8080",
+	}
+
+	flag.StringVar(&cfg.Addr, "a", cfg.Addr, "HTTP server endpoint address")
+
+	// Проверяем неизвестные флаги
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
+		flag.PrintDefaults()
+		fmt.Fprintf(flag.CommandLine.Output(), "\nUnknown flags will cause the application to exit with an error.\n")
+	}
+
+	flag.Parse()
+
+	// Проверяем наличие неизвестных аргументов
+	if len(flag.Args()) > 0 {
+		fmt.Fprintf(flag.CommandLine.Output(), "Error: unknown flags or arguments: %v\n", flag.Args())
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	return cfg
+}
 
 // MemStorage хранит метрики в памяти
 type MemStorage struct {
@@ -76,13 +111,15 @@ type Storage interface {
 type Server struct {
 	storage Storage
 	router  *chi.Mux
+	config  Config
 }
 
 // NewServer создает новый экземпляр сервера
-func NewServer(storage Storage) *Server {
+func NewServer(storage Storage, cfg Config) *Server {
 	s := &Server{
 		storage: storage,
 		router:  chi.NewRouter(),
+		config:  cfg,
 	}
 	s.configureRouter()
 	return s
@@ -147,7 +184,7 @@ func (s *Server) getMetricValueHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var value string
-
+	
 	switch metricType {
 	case Gauge:
 		val, err := s.storage.GetGauge(metricName)
@@ -255,9 +292,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	cfg := parseServerFlags()
 	storage := NewMemStorage()
-	server := NewServer(storage)
+	server := NewServer(storage, cfg)
 
-	log.Println("Server starting on :8080")
-	log.Fatal(http.ListenAndServe(":8080", server))
+	log.Printf("Server starting on %s", cfg.Addr)
+	log.Fatal(http.ListenAndServe(cfg.Addr, server))
 }
