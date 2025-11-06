@@ -138,8 +138,10 @@ func (a *Agent) sendMetric(metricType, name string, value interface{}) error {
 		return fmt.Errorf("unsupported metric type: %T", value)
 	}
 	
-	url := fmt.Sprintf("%s/update/%s/%s/%s", 
+	url := fmt.Sprintf("http://%s/update/%s/%s/%s", 
 		a.config.ServerURL, metricType, name, valueStr)
+	
+	log.Println("Url = ", url)
 	
 	req, err := http.NewRequest("POST", url, nil)
 	if err != nil {
