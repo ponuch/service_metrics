@@ -6,9 +6,11 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -53,7 +55,37 @@ func parseAgentFlags() Config {
 	cfg.PollInterval = time.Duration(pollIntervalSec) * time.Second
 	cfg.ReportInterval = time.Duration(reportIntervalSec) * time.Second
 
+	// Нормализуем URL - добавляем схему если отсутствует
+	cfg.ServerURL = normalizeURL(cfg.ServerURL)
+
 	return cfg
+}
+
+// normalizeURL добавляет схему http:// если она отсутствует
+func normalizeURL(rawURL string) string {
+	if rawURL == "" {
+		return "http://localhost:8080"
+	}
+
+	// Если URL уже содержит схему, возвращаем как есть
+	if strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://") {
+		return rawURL
+	}
+
+	// Добавляем схему по умолчанию
+	// Если содержит порт (например, localhost:8080), добавляем http://
+	if strings.Contains(rawURL, ":") {
+		return "http://" + rawURL
+	}
+
+	// Для простых имен хостов добавляем порт по умолчанию
+	return "http://" + rawURL + ":8080"
+}
+
+// validateURL проверяет валидность URL
+func validateURL(rawURL string) error {
+	_, err := url.ParseRequestURI(rawURL)
+	return err
 }
 
 // Agent структура агента
@@ -65,6 +97,11 @@ type Agent struct {
 
 // NewAgent создает новый экземпляр агента
 func NewAgent(cfg Config) *Agent {
+	// Валидируем URL
+	if err := validateURL(cfg.ServerURL); err != nil {
+		log.Printf("Warning: Invalid server URL %s: %v", cfg.ServerURL, err)
+	}
+
 	return &Agent{
 		config:  cfg,
 		metrics: make(map[string]interface{}),
@@ -138,20 +175,18 @@ func (a *Agent) sendMetric(metricType, name string, value interface{}) error {
 		return fmt.Errorf("unsupported metric type: %T", value)
 	}
 	
-	url := fmt.Sprintf("http://%s/update/%s/%s/%s", 
+	url := fmt.Sprintf("%s/update/%s/%s/%s", 
 		a.config.ServerURL, metricType, name, valueStr)
-	
-	log.Println("Url = ", url)
 	
 	req, err := http.NewRequest("POST", url, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "text/plain")
 	
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 	
@@ -164,6 +199,9 @@ func (a *Agent) sendMetric(metricType, name string, value interface{}) error {
 
 // sendMetrics отправляет все метрики на сервер
 func (a *Agent) sendMetrics() {
+	log.Printf("Sending %d metrics to %s", len(a.metrics), a.config.ServerURL)
+	
+	sentCount := 0
 	for name, value := range a.metrics {
 		var metricType string
 		
@@ -180,9 +218,11 @@ func (a *Agent) sendMetrics() {
 		if err := a.sendMetric(metricType, name, value); err != nil {
 			log.Printf("Failed to send metric %s: %v", name, err)
 		} else {
-			log.Printf("Successfully sent metric: %s = %v", name, value)
+			sentCount++
 		}
 	}
+	
+	log.Printf("Successfully sent %d metrics", sentCount)
 }
 
 // Run запускает агент
@@ -198,15 +238,17 @@ func (a *Agent) Run() {
 	log.Printf("  Poll interval: %v", a.config.PollInterval)
 	log.Printf("  Report interval: %v", a.config.ReportInterval)
 	
+	// Собираем метрики сразу при старте
+	a.collectMetrics()
+	
 	for {
 		select {
 		case <-pollTicker.C:
 			a.collectMetrics()
-			log.Printf("Metrics collected at %v", time.Now())
+			log.Printf("Collected %d metrics at %v", len(a.metrics), time.Now().Format("15:04:05"))
 			
 		case <-reportTicker.C:
 			a.sendMetrics()
-			log.Printf("Metrics sent at %v", time.Now())
 		}
 	}
 }
