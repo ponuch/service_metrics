@@ -19,20 +19,20 @@ func TestAgentCollectMetrics(t *testing.T) {
     agent.collectMetrics()
     
     // Проверяем, что метрики собраны
-    if _, exists := agent.metrics["Alloc"]; !exists {
+    if _, exists := agent.gauges["Alloc"]; !exists {
         t.Error("Expected Alloc metric to be collected")
     }
     
-    if _, exists := agent.metrics["PollCount"]; !exists {
+    if _, exists := agent.counters["PollCount"]; !exists {
         t.Error("Expected PollCount metric to be collected")
     }
     
-    if _, exists := agent.metrics["RandomValue"]; !exists {
+    if _, exists := agent.gauges["RandomValue"]; !exists {
         t.Error("Expected RandomValue metric to be collected")
     }
     
     // Проверяем тип PollCount
-    if count, ok := agent.metrics["PollCount"].(int64); !ok || count != 1 {
+    if count, ok := agent.counters["PollCount"]; !ok || count != 1 {
         t.Errorf("Expected PollCount to be 1, got %v", count)
     }
 }
