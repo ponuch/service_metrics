@@ -24,6 +24,66 @@ type Config struct {
 	Addr string
 }
 
+var t *template.Template
+var templateError error
+
+// инициализация темплейта
+func init() {
+	// HTML шаблон
+	tmpl := `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Metrics</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        h2 { color: #333; }
+    </style>
+</head>
+<body>
+    <h1>Metrics</h1>
+    
+    <h2>Gauge Metrics</h2>
+    <table>
+        <tr>
+            <th>Name</th>
+            <th>Value</th>
+        </tr>
+        {{range $name, $value := .Gauges}}
+        <tr>
+            <td>{{$name}}</td>
+            <td>{{$value}}</td>
+        </tr>
+        {{end}}
+    </table>
+
+    <h2>Counter Metrics</h2>
+    <table>
+        <tr>
+            <th>Name</th>
+            <th>Value</th>
+        </tr>
+        {{range $name, $value := .Counters}}
+        <tr>
+            <td>{{$name}}</td>
+            <td>{{$value}}</td>
+        </tr>
+        {{end}}
+    </table>
+</body>
+</html>
+`
+	// Парсинг и выполнение шаблона
+	t, templateError = template.New("metrics").Parse(tmpl)
+	if templateError != nil {
+		log.Fatal("Error generating page")
+		return
+	}
+}
+
 // parseServerFlags парсит флаги сервера
 func parseServerFlags() Config {
 	cfg := Config{
@@ -214,54 +274,6 @@ func (s *Server) getMetricValueHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getAllMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	gauges, counters := s.storage.GetAllMetrics()
 
-	// HTML шаблон
-	tmpl := `
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Metrics</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        table { border-collapse: collapse; width: 100%; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        th { background-color: #f2f2f2; }
-        h2 { color: #333; }
-    </style>
-</head>
-<body>
-    <h1>Metrics</h1>
-    
-    <h2>Gauge Metrics</h2>
-    <table>
-        <tr>
-            <th>Name</th>
-            <th>Value</th>
-        </tr>
-        {{range $name, $value := .Gauges}}
-        <tr>
-            <td>{{$name}}</td>
-            <td>{{$value}}</td>
-        </tr>
-        {{end}}
-    </table>
-
-    <h2>Counter Metrics</h2>
-    <table>
-        <tr>
-            <th>Name</th>
-            <th>Value</th>
-        </tr>
-        {{range $name, $value := .Counters}}
-        <tr>
-            <td>{{$name}}</td>
-            <td>{{$value}}</td>
-        </tr>
-        {{end}}
-    </table>
-</body>
-</html>
-`
-
 	// Данные для шаблона
 	data := struct {
 		Gauges   map[string]float64
@@ -271,15 +283,8 @@ func (s *Server) getAllMetricsHandler(w http.ResponseWriter, r *http.Request) {
 		Counters: counters,
 	}
 
-	// Парсинг и выполнение шаблона
-	t, err := template.New("metrics").Parse(tmpl)
-	if err != nil {
-		http.Error(w, "Error generating page", http.StatusInternalServerError)
-		return
-	}
-
 	w.Header().Set("Content-Type", "text/html")
-	err = t.Execute(w, data)
+	err := t.Execute(w, data)
 	if err != nil {
 		http.Error(w, "Error rendering page", http.StatusInternalServerError)
 		return

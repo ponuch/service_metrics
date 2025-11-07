@@ -91,7 +91,9 @@ func validateURL(rawURL string) error {
 // Agent структура агента
 type Agent struct {
 	config  Config
-	metrics map[string]interface{}
+	gauges   map[string]float64
+	counters map[string]int64
+	// metrics map[string]interface{}
 	client  *http.Client
 }
 
@@ -103,9 +105,11 @@ func NewAgent(cfg Config) *Agent {
 	}
 
 	return &Agent{
-		config:  cfg,
-		metrics: make(map[string]interface{}),
-		client:  &http.Client{Timeout: 10 * time.Second},
+		config:   cfg,
+		gauges:   make(map[string]float64),
+		counters: make(map[string]int64),
+		// metrics:  make(map[string]interface{}),
+		client:   &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -114,46 +118,46 @@ func (a *Agent) collectRuntimeMetrics() {
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
 
-	a.metrics["Alloc"] = float64(memStats.Alloc)
-	a.metrics["BuckHashSys"] = float64(memStats.BuckHashSys)
-	a.metrics["Frees"] = float64(memStats.Frees)
-	a.metrics["GCCPUFraction"] = memStats.GCCPUFraction
-	a.metrics["GCSys"] = float64(memStats.GCSys)
-	a.metrics["HeapAlloc"] = float64(memStats.HeapAlloc)
-	a.metrics["HeapIdle"] = float64(memStats.HeapIdle)
-	a.metrics["HeapInuse"] = float64(memStats.HeapInuse)
-	a.metrics["HeapObjects"] = float64(memStats.HeapObjects)
-	a.metrics["HeapReleased"] = float64(memStats.HeapReleased)
-	a.metrics["HeapSys"] = float64(memStats.HeapSys)
-	a.metrics["LastGC"] = float64(memStats.LastGC)
-	a.metrics["Lookups"] = float64(memStats.Lookups)
-	a.metrics["MCacheInuse"] = float64(memStats.MCacheInuse)
-	a.metrics["MCacheSys"] = float64(memStats.MCacheSys)
-	a.metrics["MSpanInuse"] = float64(memStats.MSpanInuse)
-	a.metrics["MSpanSys"] = float64(memStats.MSpanSys)
-	a.metrics["Mallocs"] = float64(memStats.Mallocs)
-	a.metrics["NextGC"] = float64(memStats.NextGC)
-	a.metrics["NumForcedGC"] = float64(memStats.NumForcedGC)
-	a.metrics["NumGC"] = float64(memStats.NumGC)
-	a.metrics["OtherSys"] = float64(memStats.OtherSys)
-	a.metrics["PauseTotalNs"] = float64(memStats.PauseTotalNs)
-	a.metrics["StackInuse"] = float64(memStats.StackInuse)
-	a.metrics["StackSys"] = float64(memStats.StackSys)
-	a.metrics["Sys"] = float64(memStats.Sys)
-	a.metrics["TotalAlloc"] = float64(memStats.TotalAlloc)
+	a.gauges["Alloc"] = float64(memStats.Alloc)
+	a.gauges["BuckHashSys"] = float64(memStats.BuckHashSys)
+	a.gauges["Frees"] = float64(memStats.Frees)
+	a.gauges["GCCPUFraction"] = memStats.GCCPUFraction
+	a.gauges["GCSys"] = float64(memStats.GCSys)
+	a.gauges["HeapAlloc"] = float64(memStats.HeapAlloc)
+	a.gauges["HeapIdle"] = float64(memStats.HeapIdle)
+	a.gauges["HeapInuse"] = float64(memStats.HeapInuse)
+	a.gauges["HeapObjects"] = float64(memStats.HeapObjects)
+	a.gauges["HeapReleased"] = float64(memStats.HeapReleased)
+	a.gauges["HeapSys"] = float64(memStats.HeapSys)
+	a.gauges["LastGC"] = float64(memStats.LastGC)
+	a.gauges["Lookups"] = float64(memStats.Lookups)
+	a.gauges["MCacheInuse"] = float64(memStats.MCacheInuse)
+	a.gauges["MCacheSys"] = float64(memStats.MCacheSys)
+	a.gauges["MSpanInuse"] = float64(memStats.MSpanInuse)
+	a.gauges["MSpanSys"] = float64(memStats.MSpanSys)
+	a.gauges["Mallocs"] = float64(memStats.Mallocs)
+	a.gauges["NextGC"] = float64(memStats.NextGC)
+	a.gauges["NumForcedGC"] = float64(memStats.NumForcedGC)
+	a.gauges["NumGC"] = float64(memStats.NumGC)
+	a.gauges["OtherSys"] = float64(memStats.OtherSys)
+	a.gauges["PauseTotalNs"] = float64(memStats.PauseTotalNs)
+	a.gauges["StackInuse"] = float64(memStats.StackInuse)
+	a.gauges["StackSys"] = float64(memStats.StackSys)
+	a.gauges["Sys"] = float64(memStats.Sys)
+	a.gauges["TotalAlloc"] = float64(memStats.TotalAlloc)
 }
 
 // collectCustomMetrics собирает кастомные метрики
 func (a *Agent) collectCustomMetrics() {
 	// PollCount - счетчик обновлений
-	if count, ok := a.metrics["PollCount"].(int64); ok {
-		a.metrics["PollCount"] = count + 1
+	if count, ok := a.counters["PollCount"]; ok {
+		a.counters["PollCount"] = count + 1
 	} else {
-		a.metrics["PollCount"] = int64(1)
+		a.counters["PollCount"] = int64(1)
 	}
 	
 	// RandomValue - случайное значение
-	a.metrics["RandomValue"] = rand.Float64()
+	a.gauges["RandomValue"] = rand.Float64()
 }
 
 // collectMetrics собирает все метрики
@@ -199,23 +203,21 @@ func (a *Agent) sendMetric(metricType, name string, value interface{}) error {
 
 // sendMetrics отправляет все метрики на сервер
 func (a *Agent) sendMetrics() {
-	log.Printf("Sending %d metrics to %s", len(a.metrics), a.config.ServerURL)
+	allMetrics := len(a.counters) + len(a.gauges)
+	log.Printf("Sending %d metrics to %s", allMetrics, a.config.ServerURL)
 	
 	sentCount := 0
-	for name, value := range a.metrics {
-		var metricType string
-		
-		switch value.(type) {
-		case float64:
-			metricType = "gauge"
-		case int64:
-			metricType = "counter"
-		default:
-			log.Printf("Unknown type for metric %s: %T", name, value)
-			continue
+
+	for name, value := range a.gauges {
+		if err := a.sendMetric("gauge", name, value); err != nil {
+			log.Printf("Failed to send metric %s: %v", name, err)
+		} else {
+			sentCount++
 		}
-		
-		if err := a.sendMetric(metricType, name, value); err != nil {
+	}
+
+	for name, value := range a.counters {
+		if err := a.sendMetric("counter", name, value); err != nil {
 			log.Printf("Failed to send metric %s: %v", name, err)
 		} else {
 			sentCount++
@@ -245,7 +247,8 @@ func (a *Agent) Run() {
 		select {
 		case <-pollTicker.C:
 			a.collectMetrics()
-			log.Printf("Collected %d metrics at %v", len(a.metrics), time.Now().Format("15:04:05"))
+			allMetrics := len(a.counters) + len(a.gauges)
+			log.Printf("Collected %d metrics at %v", allMetrics, time.Now().Format("15:04:05"))
 			
 		case <-reportTicker.C:
 			a.sendMetrics()
