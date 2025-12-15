@@ -464,8 +464,6 @@ func TestServerConfigPriority(t *testing.T) {
 func TestLoggingMiddleware(t *testing.T) {
 	// Создаем тестовый логгер с буфером для проверки вывода
 	var logOutput bytes.Buffer
-	config := zap.NewProductionConfig()
-	config.OutputPaths = []string{"stdout"}
 	
 	// Создаем кодировщик, который пишет в буфер для тестов
 	encoder := zap.NewProductionEncoderConfig()
@@ -736,11 +734,7 @@ func TestMiddlewareDoesNotAffectResponse(t *testing.T) {
 }
 
 // TestTemplateInitialization тестирует инициализацию шаблона
-func TestTemplateInitialization(t *testing.T) {
-	if t == nil {
-		t.Error("Template should be initialized")
-	}
-	
+func TestTemplateInitialization(t *testing.T) {	
 	if templateError != nil {
 		t.Errorf("Template should be parsed without error, got: %v", templateError)
 	}
