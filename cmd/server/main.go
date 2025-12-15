@@ -84,17 +84,33 @@ func init() {
 	}
 }
 
-// parseServerFlags парсит флаги сервера
+// parseServerFlags парсит флаги и переменные окружения сервера
 func parseServerFlags() Config {
-	cfg := Config{
-		Addr: "localhost:8080",
+	// Значения по умолчанию
+	defaultAddr := "localhost:8080"
+
+	// Читаем значение из переменной окружения ADDRESS
+	if envAddr := os.Getenv("ADDRESS"); envAddr != "" {
+		defaultAddr = envAddr
+		log.Printf("Using ADDRESS from environment: %s", defaultAddr)
 	}
 
-	flag.StringVar(&cfg.Addr, "a", cfg.Addr, "HTTP server endpoint address")
+	cfg := Config{
+		Addr: defaultAddr,
+	}
+
+	// Объявляем переменную для флага
+	var flagAddr string
+	
+	// Устанавливаем текущее значение как значение по умолчанию для флага
+	flag.StringVar(&flagAddr, "a", "", "HTTP server endpoint address (overrides ADDRESS env var)")
 
 	// Проверяем неизвестные флаги
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "Environment variables:\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  ADDRESS          HTTP server endpoint address (default: localhost:8080)\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "\nCommand line flags (override environment variables):\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(flag.CommandLine.Output(), "\nUnknown flags will cause the application to exit with an error.\n")
 	}
@@ -106,6 +122,12 @@ func parseServerFlags() Config {
 		fmt.Fprintf(flag.CommandLine.Output(), "Error: unknown flags or arguments: %v\n", flag.Args())
 		flag.Usage()
 		os.Exit(1)
+	}
+
+	// Если флаг был передан, используем его значение
+	if flagAddr != "" {
+		cfg.Addr = flagAddr
+		log.Printf("Using ADDRESS from command line flag: %s", cfg.Addr)
 	}
 
 	return cfg
@@ -244,7 +266,7 @@ func (s *Server) getMetricValueHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var value string
-	
+
 	switch metricType {
 	case Gauge:
 		val, err := s.storage.GetGauge(metricName)

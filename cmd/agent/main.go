@@ -21,23 +21,56 @@ type Config struct {
 	ReportInterval time.Duration
 }
 
-// parseAgentFlags парсит флаги агента
+// parseAgentFlags парсит флаги и переменные окружения агента
 func parseAgentFlags() Config {
+	// Значения по умолчанию
 	cfg := Config{
 		ServerURL:      "http://localhost:8080",
 		PollInterval:   2 * time.Second,
 		ReportInterval: 10 * time.Second,
 	}
 
-	var pollIntervalSec, reportIntervalSec int
+	// Читаем значения из переменных окружения
+	if envAddr := os.Getenv("ADDRESS"); envAddr != "" {
+		cfg.ServerURL = normalizeURL(envAddr)
+		log.Printf("Using ADDRESS from environment: %s", cfg.ServerURL)
+	}
 
-	flag.StringVar(&cfg.ServerURL, "a", cfg.ServerURL, "HTTP server endpoint address")
-	flag.IntVar(&reportIntervalSec, "r", 10, "Report interval in seconds")
-	flag.IntVar(&pollIntervalSec, "p", 2, "Poll interval in seconds")
+	if envReport := os.Getenv("REPORT_INTERVAL"); envReport != "" {
+		if val, err := strconv.Atoi(envReport); err == nil && val > 0 {
+			cfg.ReportInterval = time.Duration(val) * time.Second
+			log.Printf("Using REPORT_INTERVAL from environment: %d seconds", val)
+		} else {
+			log.Printf("Invalid REPORT_INTERVAL environment variable: %s, using default", envReport)
+		}
+	}
+
+	if envPoll := os.Getenv("POLL_INTERVAL"); envPoll != "" {
+		if val, err := strconv.Atoi(envPoll); err == nil && val > 0 {
+			cfg.PollInterval = time.Duration(val) * time.Second
+			log.Printf("Using POLL_INTERVAL from environment: %d seconds", val)
+		} else {
+			log.Printf("Invalid POLL_INTERVAL environment variable: %s, using default", envPoll)
+		}
+	}
+
+	// Парсим флаги командной строки (они имеют приоритет над переменными окружения)
+	var pollIntervalSec, reportIntervalSec int
+	var serverURL string
+
+	// Устанавливаем текущие значения как значения по умолчанию для флагов
+	flag.StringVar(&serverURL, "a", "", "HTTP server endpoint address (overrides ADDRESS env var)")
+	flag.IntVar(&reportIntervalSec, "r", 0, "Report interval in seconds (overrides REPORT_INTERVAL env var)")
+	flag.IntVar(&pollIntervalSec, "p", 0, "Poll interval in seconds (overrides POLL_INTERVAL env var)")
 
 	// Проверяем неизвестные флаги
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "Environment variables:\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  ADDRESS          HTTP server endpoint address (default: http://localhost:8080)\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  REPORT_INTERVAL  Report interval in seconds (default: 10)\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  POLL_INTERVAL    Poll interval in seconds (default: 2)\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "\nCommand line flags (override environment variables):\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(flag.CommandLine.Output(), "\nUnknown flags will cause the application to exit with an error.\n")
 	}
@@ -51,12 +84,21 @@ func parseAgentFlags() Config {
 		os.Exit(1)
 	}
 
-	// Преобразуем секунды в Duration
-	cfg.PollInterval = time.Duration(pollIntervalSec) * time.Second
-	cfg.ReportInterval = time.Duration(reportIntervalSec) * time.Second
+	// Применяем значения флагов (если они были установлены)
+	if serverURL != "" {
+		cfg.ServerURL = normalizeURL(serverURL)
+		log.Printf("Using ADDRESS from command line flag: %s", cfg.ServerURL)
+	}
 
-	// Нормализуем URL - добавляем схему если отсутствует
-	cfg.ServerURL = normalizeURL(cfg.ServerURL)
+	if reportIntervalSec > 0 {
+		cfg.ReportInterval = time.Duration(reportIntervalSec) * time.Second
+		log.Printf("Using REPORT_INTERVAL from command line flag: %d seconds", reportIntervalSec)
+	}
+
+	if pollIntervalSec > 0 {
+		cfg.PollInterval = time.Duration(pollIntervalSec) * time.Second
+		log.Printf("Using POLL_INTERVAL from command line flag: %d seconds", pollIntervalSec)
+	}
 
 	return cfg
 }
@@ -93,7 +135,6 @@ type Agent struct {
 	config  Config
 	gauges   map[string]float64
 	counters map[string]int64
-	// metrics map[string]interface{}
 	client  *http.Client
 }
 
@@ -105,11 +146,10 @@ func NewAgent(cfg Config) *Agent {
 	}
 
 	return &Agent{
-		config:   cfg,
+		config:  cfg,
 		gauges:   make(map[string]float64),
 		counters: make(map[string]int64),
-		// metrics:  make(map[string]interface{}),
-		client:   &http.Client{Timeout: 10 * time.Second},
+		client:  &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -215,7 +255,7 @@ func (a *Agent) sendMetrics() {
 			sentCount++
 		}
 	}
-
+	
 	for name, value := range a.counters {
 		if err := a.sendMetric("counter", name, value); err != nil {
 			log.Printf("Failed to send metric %s: %v", name, err)
@@ -227,7 +267,7 @@ func (a *Agent) sendMetrics() {
 	log.Printf("Successfully sent %d metrics", sentCount)
 }
 
-// Run запускает агент
+// Run запускает агента
 func (a *Agent) Run() {
 	pollTicker := time.NewTicker(a.config.PollInterval)
 	reportTicker := time.NewTicker(a.config.ReportInterval)
@@ -235,10 +275,11 @@ func (a *Agent) Run() {
 	defer pollTicker.Stop()
 	defer reportTicker.Stop()
 	
-	log.Printf("Agent started with:")
+	log.Printf("Agent started with configuration:")
 	log.Printf("  Server URL: %s", a.config.ServerURL)
 	log.Printf("  Poll interval: %v", a.config.PollInterval)
 	log.Printf("  Report interval: %v", a.config.ReportInterval)
+	log.Printf("  Source: environment variables and command line flags")
 	
 	// Собираем метрики сразу при старте
 	a.collectMetrics()
