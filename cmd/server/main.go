@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -234,6 +236,102 @@ func (rw *responseWriter) Unwrap() http.ResponseWriter {
 	return rw.ResponseWriter
 }
 
+// compressableContentType проверяет, можно ли сжимать данный тип контента
+func compressableContentType(contentType string) bool {
+	return strings.Contains(contentType, "application/json") || 
+	       strings.Contains(contentType, "text/html") ||
+	       strings.Contains(contentType, "text/plain")
+}
+
+// gzipReader обертка для чтения сжатых данных
+type gzipReader struct {
+	*gzip.Reader
+	io.Closer
+}
+
+func (gz gzipReader) Close() error {
+	return gz.Closer.Close()
+}
+
+// gzipMiddleware middleware для обработки gzip сжатия запросов и ответов
+func gzipMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Обработка входящего сжатого запроса
+		contentEncoding := r.Header.Get("Content-Encoding")
+		if strings.Contains(contentEncoding, "gzip") {
+			gz, err := gzip.NewReader(r.Body)
+			if err != nil {
+				http.Error(w, "Invalid gzip data", http.StatusBadRequest)
+				return
+			}
+			defer gz.Close()
+			r.Body = gzipReader{gz, r.Body}
+			r.Header.Del("Content-Encoding")
+		}
+
+		// Проверяем, поддерживает ли клиент gzip
+		acceptEncoding := r.Header.Get("Accept-Encoding")
+		supportsGzip := strings.Contains(acceptEncoding, "gzip")
+
+		if supportsGzip {
+			// Используем gzipWriter для сжатия ответа
+			gw := &gzipWriter{
+				ResponseWriter: w,
+				Writer:         gzip.NewWriter(w),
+			}
+			defer gw.Close()
+			
+			// Устанавливаем заголовок сжатия
+			gw.Header().Set("Content-Encoding", "gzip")
+			w = gw
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// gzipWriter обертка для записи сжатых данных
+type gzipWriter struct {
+	http.ResponseWriter
+	Writer *gzip.Writer
+}
+
+// Write записывает данные со сжатием
+func (gw *gzipWriter) Write(b []byte) (int, error) {
+	// Проверяем тип контента
+	contentType := gw.Header().Get("Content-Type")
+	if contentType == "" {
+		// Если Content-Type не установлен, пытаемся определить
+		if http.DetectContentType(b) == "text/plain; charset=utf-8" {
+			contentType = "text/plain"
+		}
+	}
+
+	// Сжимаем только если тип контента поддерживает сжатие
+	if compressableContentType(contentType) {
+		gw.Header().Set("Content-Encoding", "gzip")
+		return gw.Writer.Write(b)
+	}
+	
+	// Иначе пишем без сжатия
+	return gw.ResponseWriter.Write(b)
+}
+
+// WriteHeader устанавливает заголовок ответа
+func (gw *gzipWriter) WriteHeader(statusCode int) {
+	// Удаляем Content-Length, так как размер после сжатия изменится
+	gw.Header().Del("Content-Length")
+	gw.ResponseWriter.WriteHeader(statusCode)
+}
+
+// Close закрывает writer gzip
+func (gw *gzipWriter) Close() error {
+	if gw.Writer != nil {
+		return gw.Writer.Close()
+	}
+	return nil
+}
+
 // loggingMiddleware middleware для логирования запросов и ответов
 func loggingMiddleware(logger *zap.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -259,6 +357,8 @@ func loggingMiddleware(logger *zap.Logger) func(http.Handler) http.Handler {
 				zap.Int("status", wrappedWriter.status),
 				zap.Int("size", wrappedWriter.size),
 				zap.Duration("duration", duration),
+				zap.String("content_encoding", r.Header.Get("Content-Encoding")),
+				zap.String("accept_encoding", r.Header.Get("Accept-Encoding")),
 			)
 		})
 	}
@@ -286,6 +386,9 @@ func NewServer(storage Storage, cfg Config, logger *zap.Logger) *Server {
 
 // configureRouter настраивает маршруты
 func (s *Server) configureRouter() {
+	// Добавляем middleware gzip перед логированием
+	s.router.Use(gzipMiddleware)
+	
 	// Добавляем middleware логирования
 	s.router.Use(loggingMiddleware(s.logger))
 	
@@ -334,6 +437,7 @@ func (s *Server) updateMetricHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
 }

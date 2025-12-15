@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"flag"
 	"io"
@@ -237,15 +238,35 @@ func TestAgentSendMetric(t *testing.T) {
 			t.Errorf("Expected Content-Type application/json, got %s", r.Header.Get("Content-Type"))
 		}
 
-		// Читаем тело запроса
-		var metric Metrics
-		body, err := io.ReadAll(r.Body)
+		// Читаем тело запроса с учетом возможного сжатия
+		var reader io.Reader = r.Body
+		contentEncoding := r.Header.Get("Content-Encoding")
+		if strings.Contains(contentEncoding, "gzip") {
+			gz, err := gzip.NewReader(r.Body)
+			if err != nil {
+				t.Errorf("Failed to create gzip reader: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			defer gz.Close()
+			reader = gz
+		}
+
+		body, err := io.ReadAll(reader)
 		if err != nil {
 			t.Errorf("Failed to read request body: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 
+		// Проверяем, что данные являются валидным JSON
+		if !json.Valid(body) {
+			t.Errorf("Received invalid JSON: %s", string(body))
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		var metric Metrics
 		if err := json.Unmarshal(body, &metric); err != nil {
 			t.Errorf("Failed to decode request JSON: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
@@ -267,9 +288,10 @@ func TestAgentSendMetric(t *testing.T) {
 	defer server.Close()
 
 	cfg := Config{
-		ServerURL:      server.URL,
-		PollInterval:   1 * time.Second,
-		ReportInterval: 5 * time.Second,
+		ServerURL:        server.URL,
+		PollInterval:     1 * time.Second,
+		ReportInterval:   5 * time.Second,
+		CompressThreshold: 1024, // Устанавливаем порог, чтобы данные не сжимались
 	}
 
 	agent := NewAgent(cfg)
@@ -568,8 +590,36 @@ func TestAgentJSONSend(t *testing.T) {
 			t.Errorf("Expected Content-Type application/json, got %s", r.Header.Get("Content-Type"))
 		}
 		
+		// Обрабатываем сжатые данные
+		var reader io.Reader = r.Body
+		contentEncoding := r.Header.Get("Content-Encoding")
+		if strings.Contains(contentEncoding, "gzip") {
+			gz, err := gzip.NewReader(r.Body)
+			if err != nil {
+				t.Errorf("Failed to create gzip reader: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			defer gz.Close()
+			reader = gz
+		}
+		
+		body, err := io.ReadAll(reader)
+		if err != nil {
+			t.Errorf("Failed to read request body: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		
+		// Проверяем валидность JSON
+		if !json.Valid(body) {
+			t.Errorf("Invalid JSON received: %s", string(body))
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		
 		var metric Metrics
-		if err := json.NewDecoder(r.Body).Decode(&metric); err != nil {
+		if err := json.Unmarshal(body, &metric); err != nil {
 			t.Errorf("Failed to decode request JSON: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -585,9 +635,10 @@ func TestAgentJSONSend(t *testing.T) {
 	defer server.Close()
 	
 	cfg := Config{
-		ServerURL:      server.URL,
-		PollInterval:   1 * time.Second,
-		ReportInterval: 5 * time.Second,
+		ServerURL:        server.URL,
+		PollInterval:     1 * time.Second,
+		ReportInterval:   5 * time.Second,
+		CompressThreshold: 1024, // Устанавливаем порог, чтобы данные не сжимались
 	}
 	
 	agent := NewAgent(cfg)
@@ -619,3 +670,117 @@ func TestAgentJSONSend(t *testing.T) {
 		t.Errorf("Second metric not as expected: %+v", receivedMetrics[1])
 	}
 }
+
+
+// TestAgentGzipCompression тестирует сжатие gzip в агенте
+func TestAgentGzipCompression(t *testing.T) {
+	// Создаем тестовый сервер для проверки сжатых запросов
+	var receivedCompressed bool
+	var receivedContentEncoding string
+	
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedContentEncoding = r.Header.Get("Content-Encoding")
+		receivedCompressed = strings.Contains(receivedContentEncoding, "gzip")
+		
+		// Читаем тело запроса
+		var reader io.Reader = r.Body
+		if receivedCompressed {
+			gz, err := gzip.NewReader(r.Body)
+			if err != nil {
+				t.Errorf("Failed to create gzip reader: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			defer gz.Close()
+			reader = gz
+		}
+		
+		body, err := io.ReadAll(reader)
+		if err != nil {
+			t.Errorf("Failed to read request body: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		
+		// Проверяем JSON
+		var metric Metrics
+		if err := json.Unmarshal(body, &metric); err != nil {
+			t.Errorf("Failed to decode JSON: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		
+		// Отправляем ответ (сжимаем если клиент поддерживает)
+		acceptEncoding := r.Header.Get("Accept-Encoding")
+		supportsGzip := strings.Contains(acceptEncoding, "gzip")
+		
+		w.Header().Set("Content-Type", "application/json")
+		if supportsGzip {
+			w.Header().Set("Content-Encoding", "gzip")
+			gz := gzip.NewWriter(w)
+			defer gz.Close()
+			json.NewEncoder(gz).Encode(metric)
+		} else {
+			json.NewEncoder(w).Encode(metric)
+		}
+	}))
+	defer server.Close()
+	
+	// Тест 1: Данные меньше порога сжатия
+	cfg1 := Config{
+		ServerURL:        server.URL,
+		PollInterval:     1 * time.Second,
+		ReportInterval:   5 * time.Second,
+		CompressThreshold: 1000, // Большой порог
+	}
+	
+	agent1 := NewAgent(cfg1)
+	
+	// Сбрасываем флаги
+	receivedCompressed = false
+	receivedContentEncoding = ""
+	
+	// Отправляем маленькие данные (JSON около 50 байт)
+	err := agent1.sendMetricJSON("gauge", "test", 123.456)
+	if err != nil {
+		t.Errorf("Failed to send metric: %v", err)
+	}
+	
+	// Не должно быть сжато, так как данные меньше порога
+	if receivedCompressed {
+		t.Error("Small data should not be compressed")
+	}
+	
+	// Тест 2: Данные больше порога сжатия
+	cfg2 := Config{
+		ServerURL:        server.URL,
+		PollInterval:     1 * time.Second,
+		ReportInterval:   5 * time.Second,
+		CompressThreshold: 10, // Маленький порог
+	}
+	
+	agent2 := NewAgent(cfg2)
+	
+	// Сбрасываем флаги
+	receivedCompressed = false
+	receivedContentEncoding = ""
+	
+	// Отправляем те же данные
+	err = agent2.sendMetricJSON("gauge", "test", 123.456)
+	if err != nil {
+		t.Errorf("Failed to send metric: %v", err)
+	}
+	
+	// Должно быть сжато, так как данные больше порога
+	if !receivedCompressed {
+		t.Error("Large data should be compressed")
+	}
+	
+	if !strings.Contains(receivedContentEncoding, "gzip") {
+		t.Errorf("Expected Content-Encoding: gzip, got %s", receivedContentEncoding)
+	}
+}
+
+
+
+

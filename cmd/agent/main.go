@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -29,6 +31,7 @@ type Config struct {
 	ServerURL      string
 	PollInterval   time.Duration
 	ReportInterval time.Duration
+	CompressThreshold int // Порог для сжатия в байтах
 }
 
 // parseAgentFlags парсит флаги и переменные окружения агента
@@ -38,6 +41,7 @@ func parseAgentFlags() Config {
 		ServerURL:      "http://localhost:8080",
 		PollInterval:   2 * time.Second,
 		ReportInterval: 10 * time.Second,
+		CompressThreshold: 1024, // 1KB порог для сжатия
 	}
 
 	// Читаем значения из переменных окружения
@@ -140,6 +144,23 @@ func validateURL(rawURL string) error {
 	return err
 }
 
+// compressData сжимает данные с использованием gzip
+func compressData(data []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	
+	if _, err := gz.Write(data); err != nil {
+		return nil, err
+	}
+	
+	if err := gz.Close(); err != nil {
+		return nil, err
+	}
+	
+	return buf.Bytes(), nil
+}
+
+
 // Agent структура агента
 type Agent struct {
 	config  Config
@@ -216,8 +237,8 @@ func (a *Agent) collectMetrics() {
 	a.collectCustomMetrics()
 }
 
-// sendMetricJSON отправляет одну метрику на сервер в формате JSON
-func (a *Agent) sendMetricJSON(metricType, name string, value any) error {
+// sendMetricJSON отправляет одну метрику на сервер в формате JSON с поддержкой gzip
+func (a *Agent) sendMetricJSON(metricType, name string, value interface{}) error {
 	var metric Metrics
 	metric.ID = name
 	metric.MType = metricType
@@ -237,13 +258,42 @@ func (a *Agent) sendMetricJSON(metricType, name string, value any) error {
 		return fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
+	var body io.Reader
+	var compressed bool
+	
+	// Проверяем размер данных и сжимаем если нужно
+	if len(jsonData) > a.config.CompressThreshold {
+		compressedData, err := compressData(jsonData)
+		if err != nil {
+			log.Printf("Failed to compress data: %v, sending uncompressed", err)
+			body = bytes.NewBuffer(jsonData)
+		} else {
+			body = bytes.NewBuffer(compressedData)
+			compressed = true
+			log.Printf("Compressed data: %d -> %d bytes (%.1f%%)", 
+				len(jsonData), len(compressedData), 
+				float64(len(compressedData))/float64(len(jsonData))*100)
+		}
+	} else {
+		body = bytes.NewBuffer(jsonData)
+	}
+
 	url := fmt.Sprintf("%s/update", a.config.ServerURL)
 	
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", url, body)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
+	
 	req.Header.Set("Content-Type", "application/json")
+	
+	// Добавляем заголовок Accept-Encoding для получения сжатых ответов
+	req.Header.Set("Accept-Encoding", "gzip")
+	
+	// Если данные сжаты, добавляем заголовок Content-Encoding
+	if compressed {
+		req.Header.Set("Content-Encoding", "gzip")
+	}
 	
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -261,9 +311,21 @@ func (a *Agent) sendMetricJSON(metricType, name string, value any) error {
 		log.Printf("Warning: Unexpected Content-Type in response: %s", contentType)
 	}
 	
+	// Обрабатываем сжатый ответ если нужно
+	var reader io.Reader = resp.Body
+	contentEncoding := resp.Header.Get("Content-Encoding")
+	if strings.Contains(contentEncoding, "gzip") {
+		gz, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			return fmt.Errorf("failed to create gzip reader: %w", err)
+		}
+		defer gz.Close()
+		reader = gz
+	}
+	
 	// Декодируем ответ для проверки
 	var responseMetric Metrics
-	if err := json.NewDecoder(resp.Body).Decode(&responseMetric); err != nil {
+	if err := json.NewDecoder(reader).Decode(&responseMetric); err != nil {
 		return fmt.Errorf("failed to decode response JSON: %w", err)
 	}
 	
@@ -296,6 +358,8 @@ func (a *Agent) sendMetricLegacy(metricType, name string, value interface{}) err
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "text/plain")
+	// Добавляем заголовок Accept-Encoding для получения сжатых ответов
+	req.Header.Set("Accept-Encoding", "gzip")
 	
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -317,7 +381,7 @@ func (a *Agent) sendMetric(metricType, name string, value interface{}) error {
 
 // sendMetrics отправляет все метрики на сервер
 func (a *Agent) sendMetrics() {
-		allMetrics := len(a.counters) + len(a.gauges)
+	allMetrics := len(a.counters) + len(a.gauges)
 	log.Printf("Sending %d metrics to %s", allMetrics, a.config.ServerURL)
 
 	sentCount := 0
@@ -353,7 +417,8 @@ func (a *Agent) Run() {
 	log.Printf("  Server URL: %s", a.config.ServerURL)
 	log.Printf("  Poll interval: %v", a.config.PollInterval)
 	log.Printf("  Report interval: %v", a.config.ReportInterval)
-	log.Printf("  Using JSON API format")
+	log.Printf("  Compression threshold: %d bytes", a.config.CompressThreshold)
+	log.Printf("  Using JSON API format with gzip compression")
 	
 	// Собираем метрики сразу при старте
 	a.collectMetrics()
