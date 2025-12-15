@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
 )
 
 // Типы метрик
@@ -189,19 +191,84 @@ type Storage interface {
 	GetAllMetrics() (map[string]float64, map[string]int64)
 }
 
+// responseWriter обертка для ResponseWriter для захвата статуса и размера
+type responseWriter struct {
+	http.ResponseWriter
+	status      int
+	size        int
+	wroteHeader bool
+}
+
+// WriteHeader перехватывает статус ответа
+func (rw *responseWriter) WriteHeader(status int) {
+	if rw.wroteHeader {
+		return
+	}
+	rw.status = status
+	rw.ResponseWriter.WriteHeader(status)
+	rw.wroteHeader = true
+}
+
+// Write перехватывает размер ответа
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	if !rw.wroteHeader {
+		rw.WriteHeader(http.StatusOK)
+	}
+	size, err := rw.ResponseWriter.Write(b)
+	rw.size += size
+	return size, err
+}
+
+// Unwrap возвращает оригинальный ResponseWriter (для совместимости)
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
+}
+
+// loggingMiddleware middleware для логирования запросов и ответов
+func loggingMiddleware(logger *zap.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			
+			// Создаем обертку для ResponseWriter
+			wrappedWriter := &responseWriter{
+				ResponseWriter: w,
+				status:         http.StatusOK, // Значение по умолчанию
+			}
+			
+			// Обрабатываем запрос
+			next.ServeHTTP(wrappedWriter, r)
+			
+			// Вычисляем длительность
+			duration := time.Since(start)
+			
+			// Логируем информацию о запросе и ответе
+			logger.Info("HTTP request",
+				zap.String("method", r.Method),
+				zap.String("uri", r.RequestURI),
+				zap.Int("status", wrappedWriter.status),
+				zap.Int("size", wrappedWriter.size),
+				zap.Duration("duration", duration),
+			)
+		})
+	}
+}
+
 // Server структура сервера
 type Server struct {
 	storage Storage
 	router  *chi.Mux
 	config  Config
+	logger  *zap.Logger
 }
 
 // NewServer создает новый экземпляр сервера
-func NewServer(storage Storage, cfg Config) *Server {
+func NewServer(storage Storage, cfg Config, logger *zap.Logger) *Server {
 	s := &Server{
 		storage: storage,
 		router:  chi.NewRouter(),
 		config:  cfg,
+		logger:  logger,
 	}
 	s.configureRouter()
 	return s
@@ -209,6 +276,9 @@ func NewServer(storage Storage, cfg Config) *Server {
 
 // configureRouter настраивает маршруты
 func (s *Server) configureRouter() {
+	// Добавляем middleware логирования
+	s.router.Use(loggingMiddleware(s.logger))
+	
 	s.router.Route("/update", func(r chi.Router) {
 		r.Post("/{metricType}/{metricName}/{metricValue}", s.updateMetricHandler)
 	})
@@ -319,10 +389,23 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	// Инициализация логгера zap
+	logger, err := zap.NewProduction()
+	if err != nil {
+		log.Fatalf("Failed to create logger: %v", err)
+	}
+	defer logger.Sync()
+	
+	// Заменяем стандартный логгер на zap
+	zap.ReplaceGlobals(logger)
+	
 	cfg := parseServerFlags()
 	storage := NewMemStorage()
-	server := NewServer(storage, cfg)
+	server := NewServer(storage, cfg, logger)
 
-	log.Printf("Server starting on %s", cfg.Addr)
-	log.Fatal(http.ListenAndServe(cfg.Addr, server))
+	logger.Info("Server starting", zap.String("address", cfg.Addr))
+	
+	if err := http.ListenAndServe(cfg.Addr, server); err != nil {
+		logger.Fatal("Server failed to start", zap.Error(err))
+	}
 }
