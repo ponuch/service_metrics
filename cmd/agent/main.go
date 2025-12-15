@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -13,6 +15,14 @@ import (
 	"strings"
 	"time"
 )
+
+// Metrics структура для JSON API
+type Metrics struct {
+	ID    string   `json:"id"`              // имя метрики
+	MType string   `json:"type"`            // параметр, принимающий значение gauge или counter
+	Delta *int64   `json:"delta,omitempty"` // значение метрики в случае передачи counter
+	Value *float64 `json:"value,omitempty"` // значение метрики в случае передачи gauge
+}
 
 // Config конфигурация агента
 type Config struct {
@@ -206,8 +216,67 @@ func (a *Agent) collectMetrics() {
 	a.collectCustomMetrics()
 }
 
-// sendMetric отправляет одну метрику на сервер
-func (a *Agent) sendMetric(metricType, name string, value interface{}) error {
+// sendMetricJSON отправляет одну метрику на сервер в формате JSON
+func (a *Agent) sendMetricJSON(metricType, name string, value any) error {
+	var metric Metrics
+	metric.ID = name
+	metric.MType = metricType
+
+	switch v := value.(type) {
+	case float64:
+		metric.Value = &v
+	case int64:
+		metric.Delta = &v
+	default:
+		return fmt.Errorf("unsupported metric type: %T", value)
+	}
+
+	// Сериализуем в JSON
+	jsonData, err := json.Marshal(metric)
+	if err != nil {
+		return fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/update", a.config.ServerURL)
+	
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned status: %d", resp.StatusCode)
+	}
+	
+	// Проверяем Content-Type ответа
+	contentType := resp.Header.Get("Content-Type")
+	if contentType != "application/json" {
+		log.Printf("Warning: Unexpected Content-Type in response: %s", contentType)
+	}
+	
+	// Декодируем ответ для проверки
+	var responseMetric Metrics
+	if err := json.NewDecoder(resp.Body).Decode(&responseMetric); err != nil {
+		return fmt.Errorf("failed to decode response JSON: %w", err)
+	}
+	
+	// Проверяем, что ответ корректный
+	if responseMetric.ID != name || responseMetric.MType != metricType {
+		return fmt.Errorf("invalid response from server")
+	}
+	
+	return nil
+}
+
+// sendMetricLegacy отправляет одну метрику на сервер в старом формате
+func (a *Agent) sendMetricLegacy(metricType, name string, value interface{}) error {
 	var valueStr string
 	
 	switch v := value.(type) {
@@ -241,11 +310,16 @@ func (a *Agent) sendMetric(metricType, name string, value interface{}) error {
 	return nil
 }
 
+// sendMetric отправляет одну метрику на сервер (использует новый JSON формат)
+func (a *Agent) sendMetric(metricType, name string, value interface{}) error {
+	return a.sendMetricJSON(metricType, name, value)
+}
+
 // sendMetrics отправляет все метрики на сервер
 func (a *Agent) sendMetrics() {
-	allMetrics := len(a.counters) + len(a.gauges)
+		allMetrics := len(a.counters) + len(a.gauges)
 	log.Printf("Sending %d metrics to %s", allMetrics, a.config.ServerURL)
-	
+
 	sentCount := 0
 
 	for name, value := range a.gauges {
@@ -255,7 +329,7 @@ func (a *Agent) sendMetrics() {
 			sentCount++
 		}
 	}
-	
+
 	for name, value := range a.counters {
 		if err := a.sendMetric("counter", name, value); err != nil {
 			log.Printf("Failed to send metric %s: %v", name, err)
@@ -263,7 +337,7 @@ func (a *Agent) sendMetrics() {
 			sentCount++
 		}
 	}
-	
+
 	log.Printf("Successfully sent %d metrics", sentCount)
 }
 
@@ -279,7 +353,7 @@ func (a *Agent) Run() {
 	log.Printf("  Server URL: %s", a.config.ServerURL)
 	log.Printf("  Poll interval: %v", a.config.PollInterval)
 	log.Printf("  Report interval: %v", a.config.ReportInterval)
-	log.Printf("  Source: environment variables and command line flags")
+	log.Printf("  Using JSON API format")
 	
 	// Собираем метрики сразу при старте
 	a.collectMetrics()
@@ -290,7 +364,7 @@ func (a *Agent) Run() {
 			a.collectMetrics()
 			allMetrics := len(a.counters) + len(a.gauges)
 			log.Printf("Collected %d metrics at %v", allMetrics, time.Now().Format("15:04:05"))
-			
+
 		case <-reportTicker.C:
 			a.sendMetrics()
 		}

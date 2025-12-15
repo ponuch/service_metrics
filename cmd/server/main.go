@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -24,6 +26,14 @@ const (
 // Config конфигурация сервера
 type Config struct {
 	Addr string
+}
+
+// Metrics структура для JSON API
+type Metrics struct {
+	ID    string   `json:"id"`              // имя метрики
+	MType string   `json:"type"`            // параметр, принимающий значение gauge или counter
+	Delta *int64   `json:"delta,omitempty"` // значение метрики в случае передачи counter
+	Value *float64 `json:"value,omitempty"` // значение метрики в случае передачи gauge
 }
 
 var t *template.Template
@@ -279,18 +289,21 @@ func (s *Server) configureRouter() {
 	// Добавляем middleware логирования
 	s.router.Use(loggingMiddleware(s.logger))
 	
+	// Старые эндпоинты (оставляем для обратной совместимости)
 	s.router.Route("/update", func(r chi.Router) {
 		r.Post("/{metricType}/{metricName}/{metricValue}", s.updateMetricHandler)
+		r.Post("/", s.updateJSONHandler) // Новый JSON эндпоинт
 	})
 
 	s.router.Route("/value", func(r chi.Router) {
 		r.Get("/{metricType}/{metricName}", s.getMetricValueHandler)
+		r.Post("/", s.getValueJSONHandler) // Новый JSON эндпоинт
 	})
 
 	s.router.Get("/", s.getAllMetricsHandler)
 }
 
-// updateMetricHandler обрабатывает запрос на обновление метрики
+// updateMetricHandler обрабатывает запрос на обновление метрики (старый формат)
 func (s *Server) updateMetricHandler(w http.ResponseWriter, r *http.Request) {
 	metricType := chi.URLParam(r, "metricType")
 	metricName := chi.URLParam(r, "metricName")
@@ -325,7 +338,7 @@ func (s *Server) updateMetricHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
-// getMetricValueHandler обрабатывает запрос на получение значения метрики
+// getMetricValueHandler обрабатывает запрос на получение значения метрики (старый формат)
 func (s *Server) getMetricValueHandler(w http.ResponseWriter, r *http.Request) {
 	metricType := chi.URLParam(r, "metricType")
 	metricName := chi.URLParam(r, "metricName")
@@ -360,6 +373,136 @@ func (s *Server) getMetricValueHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(value))
+}
+
+// updateJSONHandler обрабатывает запрос на обновление метрики в формате JSON
+func (s *Server) updateJSONHandler(w http.ResponseWriter, r *http.Request) {
+	// Проверяем Content-Type
+	contentType := r.Header.Get("Content-Type")
+	if contentType != "application/json" {
+		http.Error(w, "Content-Type must be application/json", http.StatusBadRequest)
+		return
+	}
+
+	// Читаем тело запроса
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	// Декодируем JSON
+	var metric Metrics
+	if err := json.Unmarshal(body, &metric); err != nil {
+		http.Error(w, "Invalid JSON format", http.StatusBadRequest)
+		return
+	}
+
+	// Валидируем данные
+	if metric.ID == "" {
+		http.Error(w, "Metric ID cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	if metric.MType != Gauge && metric.MType != Counter {
+		http.Error(w, "Invalid metric type", http.StatusBadRequest)
+		return
+	}
+
+	// Обновляем метрику
+	switch metric.MType {
+	case Gauge:
+		if metric.Value == nil {
+			http.Error(w, "Value field is required for gauge metric", http.StatusBadRequest)
+			return
+		}
+		s.storage.UpdateGauge(metric.ID, *metric.Value)
+	case Counter:
+		if metric.Delta == nil {
+			http.Error(w, "Delta field is required for counter metric", http.StatusBadRequest)
+			return
+		}
+		s.storage.UpdateCounter(metric.ID, *metric.Delta)
+	}
+
+	// Подготавливаем успешный ответ
+	response := metric
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		s.logger.Error("Failed to encode response", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+// getValueJSONHandler обрабатывает запрос на получение значения метрики в формате JSON
+func (s *Server) getValueJSONHandler(w http.ResponseWriter, r *http.Request) {
+	// Проверяем Content-Type
+	contentType := r.Header.Get("Content-Type")
+	if contentType != "application/json" {
+		http.Error(w, "Content-Type must be application/json", http.StatusBadRequest)
+		return
+	}
+
+	// Читаем тело запроса
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	// Декодируем JSON
+	var requestMetric Metrics
+	if err := json.Unmarshal(body, &requestMetric); err != nil {
+		http.Error(w, "Invalid JSON format", http.StatusBadRequest)
+		return
+	}
+
+	// Валидируем данные
+	if requestMetric.ID == "" {
+		http.Error(w, "Metric ID cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	if requestMetric.MType != Gauge && requestMetric.MType != Counter {
+		http.Error(w, "Invalid metric type", http.StatusBadRequest)
+		return
+	}
+
+	// Получаем значение метрики
+	responseMetric := Metrics{
+		ID:    requestMetric.ID,
+		MType: requestMetric.MType,
+	}
+
+	switch requestMetric.MType {
+	case Gauge:
+		value, err := s.storage.GetGauge(requestMetric.ID)
+		if err != nil {
+			http.Error(w, "Metric not found", http.StatusNotFound)
+			return
+		}
+		responseMetric.Value = &value
+	case Counter:
+		value, err := s.storage.GetCounter(requestMetric.ID)
+		if err != nil {
+			http.Error(w, "Metric not found", http.StatusNotFound)
+			return
+		}
+		responseMetric.Delta = &value
+	}
+
+	// Отправляем ответ
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	
+	if err := json.NewEncoder(w).Encode(responseMetric); err != nil {
+		s.logger.Error("Failed to encode response", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
 }
 
 // getAllMetricsHandler обрабатывает запрос на получение всех метрик

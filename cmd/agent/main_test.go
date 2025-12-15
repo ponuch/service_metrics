@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
+	"flag"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"flag"
 	"strings"
 	"testing"
 	"time"
@@ -13,62 +15,62 @@ import (
 // TestEnvironmentVariables тестирует чтение переменных окружения
 // func TestEnvironmentVariables(t *testing.T) {
 // 	// Вспомогательная функция для тестирования с заданными переменными окружения
-// 	testWithEnv := func(t *testing.T, address, report, poll string, 
+// 	testWithEnv := func(t *testing.T, address, report, poll string,
 // 		expectedURL string, expectedReport, expectedPoll time.Duration) {
-		
+
 // 		// Устанавливаем переменные окружения
 // 		if address != "" {
 // 			t.Setenv("ADDRESS", address)
 // 		} else {
 // 			os.Unsetenv("ADDRESS")
 // 		}
-		
+
 // 		if report != "" {
 // 			t.Setenv("REPORT_INTERVAL", report)
 // 		} else {
 // 			os.Unsetenv("REPORT_INTERVAL")
 // 		}
-		
+
 // 		if poll != "" {
 // 			t.Setenv("POLL_INTERVAL", poll)
 // 		} else {
 // 			os.Unsetenv("POLL_INTERVAL")
 // 		}
-		
+
 // 		// Сбрасываем состояние флагов
 // 		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-		
+
 // 		// Вызываем parseAgentFlags
 // 		cfg := parseAgentFlags()
-		
+
 // 		if cfg.ServerURL != expectedURL {
 // 			t.Errorf("Expected server URL %s, got %s", expectedURL, cfg.ServerURL)
 // 		}
-		
+
 // 		if cfg.ReportInterval != expectedReport {
 // 			t.Errorf("Expected report interval %v, got %v", expectedReport, cfg.ReportInterval)
 // 		}
-		
+
 // 		if cfg.PollInterval != expectedPoll {
 // 			t.Errorf("Expected poll interval %v, got %v", expectedPoll, cfg.PollInterval)
 // 		}
 // 	}
-	
+
 // 	// // Тест 1: Все переменные окружения установлены
 // 	// t.Run("All environment variables set", func(t *testing.T) {
-// 	// 	testWithEnv(t, "example.com:9090", "5", "1", 
+// 	// 	testWithEnv(t, "example.com:9090", "5", "1",
 // 	// 		"http://example.com:9090", 5*time.Second, 1*time.Second)
 // 	// })
-	
+
 // 	// // Тест 2: Частично установленные переменные окружения
 // 	// t.Run("Partially set environment variables", func(t *testing.T) {
-// 	// 	testWithEnv(t, "", "15", "", 
+// 	// 	testWithEnv(t, "", "15", "",
 // 	// 		"http://localhost:8080", 15*time.Second, 2*time.Second)
 // 	// })
-	
+
 // 	// // Тест 3: Некорректные значения в переменных окружения
 // 	t.Run("Invalid environment values", func(t *testing.T) {
-// 		testWithEnv(t, "", "invalid", "-5", 
+// 		testWithEnv(t, "", "invalid", "-5",
 // 			"http://localhost:8080", 10*time.Second, 2*time.Second)
 // 	})
 // }
@@ -218,35 +220,102 @@ func TestAgentFlagsDefaultValues(t *testing.T) {
 	}
 }
 
-// TestAgentSendMetric тестирует отправку метрики
+// TestAgentSendMetric тестирует отправку метрик
 func TestAgentSendMetric(t *testing.T) {
 	// Создаем тестовый сервер
+	var receivedRequests []Metrics
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			t.Errorf("Expected POST request, got %s", r.Method)
 		}
+
+		if r.URL.Path != "/update" {
+			t.Errorf("Unexpected path: %s", r.URL.Path)
+		}
+
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("Expected Content-Type application/json, got %s", r.Header.Get("Content-Type"))
+		}
+
+		// Читаем тело запроса
+		var metric Metrics
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("Failed to read request body: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		if err := json.Unmarshal(body, &metric); err != nil {
+			t.Errorf("Failed to decode request JSON: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		// Сохраняем полученную метрику
+		receivedRequests = append(receivedRequests, metric)
+
+		// Отправляем корректный JSON ответ
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
+		
+		// Возвращаем ту же метрику (как это делает реальный сервер)
+		if err := json.NewEncoder(w).Encode(metric); err != nil {
+			t.Errorf("Failed to encode response: %v", err)
+		}
 	}))
 	defer server.Close()
-	
+
 	cfg := Config{
 		ServerURL:      server.URL,
 		PollInterval:   1 * time.Second,
 		ReportInterval: 5 * time.Second,
 	}
-	
+
 	agent := NewAgent(cfg)
-	
+
 	// Тестируем отправку gauge метрики
 	err := agent.sendMetric("gauge", "test_metric", 123.456)
 	if err != nil {
 		t.Errorf("Failed to send gauge metric: %v", err)
 	}
-	
+
+	// Проверяем полученную метрику
+	if len(receivedRequests) != 1 {
+		t.Errorf("Expected 1 request, got %d", len(receivedRequests))
+	} else {
+		metric := receivedRequests[0]
+		if metric.ID != "test_metric" {
+			t.Errorf("Expected metric ID 'test_metric', got %s", metric.ID)
+		}
+		if metric.MType != "gauge" {
+			t.Errorf("Expected metric type 'gauge', got %s", metric.MType)
+		}
+		if metric.Value == nil || *metric.Value != 123.456 {
+			t.Errorf("Expected metric value 123.456, got %v", metric.Value)
+		}
+	}
+
 	// Тестируем отправку counter метрики
 	err = agent.sendMetric("counter", "test_counter", int64(42))
 	if err != nil {
 		t.Errorf("Failed to send counter metric: %v", err)
+	}
+
+	// Проверяем полученную метрику
+	if len(receivedRequests) != 2 {
+		t.Errorf("Expected 2 requests, got %d", len(receivedRequests))
+	} else {
+		metric := receivedRequests[1]
+		if metric.ID != "test_counter" {
+			t.Errorf("Expected metric ID 'test_counter', got %s", metric.ID)
+		}
+		if metric.MType != "counter" {
+			t.Errorf("Expected metric type 'counter', got %s", metric.MType)
+		}
+		if metric.Delta == nil || *metric.Delta != 42 {
+			t.Errorf("Expected metric delta 42, got %v", metric.Delta)
+		}
 	}
 }
 
@@ -479,5 +548,74 @@ func TestCollectRuntimeMetrics(t *testing.T) {
 		if _, exists := agent.gauges[metric]; !exists {
 			t.Errorf("Expected metric %s to be collected", metric)
 		}
+	}
+}
+
+// TestAgentJSONSend тестирует отправку метрик в формате JSON
+func TestAgentJSONSend(t *testing.T) {
+	// Создаем тестовый сервер
+	receivedMetrics := make([]Metrics, 0)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("Expected POST request, got %s", r.Method)
+		}
+		
+		if r.URL.Path != "/update" {
+			t.Errorf("Expected path /update, got %s", r.URL.Path)
+		}
+		
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("Expected Content-Type application/json, got %s", r.Header.Get("Content-Type"))
+		}
+		
+		var metric Metrics
+		if err := json.NewDecoder(r.Body).Decode(&metric); err != nil {
+			t.Errorf("Failed to decode request JSON: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		
+		receivedMetrics = append(receivedMetrics, metric)
+		
+		// Отправляем успешный ответ
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(metric)
+	}))
+	defer server.Close()
+	
+	cfg := Config{
+		ServerURL:      server.URL,
+		PollInterval:   1 * time.Second,
+		ReportInterval: 5 * time.Second,
+	}
+	
+	agent := NewAgent(cfg)
+	
+	// Тестируем отправку gauge метрики
+	err := agent.sendMetricJSON("gauge", "test_gauge", 123.456)
+	if err != nil {
+		t.Errorf("Failed to send gauge metric: %v", err)
+	}
+	
+	// Тестируем отправку counter метрики
+	err = agent.sendMetricJSON("counter", "test_counter", int64(42))
+	if err != nil {
+		t.Errorf("Failed to send counter metric: %v", err)
+	}
+	
+	// Проверяем полученные метрики
+	if len(receivedMetrics) != 2 {
+		t.Errorf("Expected 2 metrics received, got %d", len(receivedMetrics))
+	}
+	
+	if receivedMetrics[0].ID != "test_gauge" || receivedMetrics[0].MType != "gauge" || 
+		receivedMetrics[0].Value == nil || *receivedMetrics[0].Value != 123.456 {
+		t.Errorf("First metric not as expected: %+v", receivedMetrics[0])
+	}
+	
+	if receivedMetrics[1].ID != "test_counter" || receivedMetrics[1].MType != "counter" || 
+		receivedMetrics[1].Delta == nil || *receivedMetrics[1].Delta != 42 {
+		t.Errorf("Second metric not as expected: %+v", receivedMetrics[1])
 	}
 }
