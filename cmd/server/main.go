@@ -158,21 +158,11 @@ func parseServerFlags() Config {
         flagRestore         bool
     )
     
-    // Устанавливаем текущие значения как значения по умолчанию для флагов
+    // Устанавливаем значения по умолчанию для флагов
     flag.StringVar(&flagAddr, "a", "", "HTTP server endpoint address (overrides ADDRESS env var)")
     flag.IntVar(&flagStoreInterval, "i", 0, "Store interval in seconds (overrides STORE_INTERVAL env var)")
     flag.StringVar(&flagFileStoragePath, "f", "", "File storage path (overrides FILE_STORAGE_PATH env var)")
     flag.BoolVar(&flagRestore, "r", true, "Restore metrics from file on start (overrides RESTORE env var)")
-    // Note: Для bool флага, если он не передан, используется значение по умолчанию
-    // Чтобы отличить "не передан" от "передан с false", используем отдельную переменную
-    flagRestoreSet := false
-    flag.BoolVar(&flagRestore, "r", true, "Restore metrics from file on start (overrides RESTORE env var)")
-    // Обертка для обработки флага -r
-    flag.Visit(func(f *flag.Flag) {
-        if f.Name == "r" {
-            flagRestoreSet = true
-        }
-    })
 
     // Проверяем неизвестные флаги
     flag.Usage = func() {
@@ -196,24 +186,29 @@ func parseServerFlags() Config {
         os.Exit(1)
     }
 
+    // Собираем информацию о том, какие флаги были установлены
+    flagsSet := make(map[string]bool)
+    flag.Visit(func(f *flag.Flag) {
+        flagsSet[f.Name] = true
+    })
+
     // Если флаги были переданы, используем их значения
-    if flagAddr != "" {
+    if flagsSet["a"] {
         cfg.Addr = flagAddr
         log.Printf("Using ADDRESS from command line flag: %s", cfg.Addr)
     }
     
-    if flagStoreInterval > 0 || (flag.Parsed() && flag.Lookup("i") != nil) {
-        // Проверяем, был ли передан флаг -i (даже если значение 0)
+    if flagsSet["i"] {
         cfg.StoreInterval = time.Duration(flagStoreInterval) * time.Second
         log.Printf("Using STORE_INTERVAL from command line flag: %d seconds", flagStoreInterval)
     }
     
-    if flagFileStoragePath != "" {
+    if flagsSet["f"] {
         cfg.FileStoragePath = flagFileStoragePath
         log.Printf("Using FILE_STORAGE_PATH from command line flag: %s", cfg.FileStoragePath)
     }
     
-    if flagRestoreSet {
+    if flagsSet["r"] {
         cfg.Restore = flagRestore
         log.Printf("Using RESTORE from command line flag: %t", cfg.Restore)
     }
