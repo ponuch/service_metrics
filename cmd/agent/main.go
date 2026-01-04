@@ -16,15 +16,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ponuch/service_metrics/internal/model"
 )
 
 // Metrics структура для JSON API
-type Metrics struct {
-	ID    string   `json:"id"`              // имя метрики
-	MType string   `json:"type"`            // параметр, принимающий значение gauge или counter
-	Delta *int64   `json:"delta,omitempty"` // значение метрики в случае передачи counter
-	Value *float64 `json:"value,omitempty"` // значение метрики в случае передачи gauge
-}
+// type Metrics struct {
+// 	ID    string   `json:"id"`              // имя метрики
+// 	MType string   `json:"type"`            // параметр, принимающий значение gauge или counter
+// 	Delta *int64   `json:"delta,omitempty"` // значение метрики в случае передачи counter
+// 	Value *float64 `json:"value,omitempty"` // значение метрики в случае передачи gauge
+// }
 
 // Config конфигурация агента
 type Config struct {
@@ -239,7 +241,7 @@ func (a *Agent) collectMetrics() {
 
 // sendMetricJSON отправляет одну метрику на сервер в формате JSON с поддержкой gzip
 func (a *Agent) sendMetricJSON(metricType, name string, value interface{}) error {
-	var metric Metrics
+	var metric models.Metrics
 	metric.ID = name
 	metric.MType = metricType
 
@@ -324,7 +326,7 @@ func (a *Agent) sendMetricJSON(metricType, name string, value interface{}) error
 	}
 	
 	// Декодируем ответ для проверки
-	var responseMetric Metrics
+	var responseMetric models.Metrics
 	if err := json.NewDecoder(reader).Decode(&responseMetric); err != nil {
 		return fmt.Errorf("failed to decode response JSON: %w", err)
 	}

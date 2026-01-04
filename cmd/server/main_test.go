@@ -17,6 +17,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest"
+	"github.com/ponuch/service_metrics/internal/model"
 )
 
 
@@ -1262,7 +1263,7 @@ func TestUpdateJSONHandler(t *testing.T) {
 				}
 
 				// Проверяем структуру ответа
-				var response Metrics
+				var response models.Metrics
 				if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
 					t.Errorf("Failed to decode response JSON: %v", err)
 				}
@@ -1366,7 +1367,7 @@ func TestGetValueJSONHandler(t *testing.T) {
 					t.Errorf("Expected Content-Type application/json, got %s", contentType)
 				}
 
-				var response Metrics
+				var response models.Metrics
 				if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
 					t.Errorf("Failed to decode response JSON: %v", err)
 				}

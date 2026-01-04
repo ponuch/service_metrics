@@ -22,13 +22,14 @@ import (
 
     "github.com/go-chi/chi/v5"
     "go.uber.org/zap"
+    "github.com/ponuch/service_metrics/internal/model"
 )
 
 // Типы метрик
-const (
-	Gauge   = "gauge"
-	Counter = "counter"
-)
+// const (
+// 	Gauge   = "gauge"
+// 	Counter = "counter"
+// )
 
 // Config конфигурация сервера
 type Config struct {
@@ -39,12 +40,12 @@ type Config struct {
 }
 
 // Metrics структура для JSON API
-type Metrics struct {
-	ID    string   `json:"id"`              // имя метрики
-	MType string   `json:"type"`            // параметр, принимающий значение gauge или counter
-	Delta *int64   `json:"delta,omitempty"` // значение метрики в случае передачи counter
-	Value *float64 `json:"value,omitempty"` // значение метрики в случае передачи gauge
-}
+// type Metrics struct {
+// 	ID    string   `json:"id"`              // имя метрики
+// 	MType string   `json:"type"`            // параметр, принимающий значение gauge или counter
+// 	Delta *int64   `json:"delta,omitempty"` // значение метрики в случае передачи counter
+// 	Value *float64 `json:"value,omitempty"` // значение метрики в случае передачи gauge
+// }
 
 var t *template.Template
 var templateError error
@@ -248,21 +249,21 @@ func (m *MemStorage) Save() error {
     }
     
     // Подготавливаем данные для сохранения
-    var metrics []Metrics
+    var metrics []models.Metrics
     for name, value := range m.gauges {
         v := value
-        metrics = append(metrics, Metrics{
+        metrics = append(metrics, models.Metrics{
             ID:    name,
-            MType: Gauge,
+            MType: models.Gauge,
             Value: &v,
         })
     }
     
     for name, value := range m.counters {
         v := value
-        metrics = append(metrics, Metrics{
+        metrics = append(metrics, models.Metrics{
             ID:    name,
-            MType: Counter,
+            MType: models.Counter,
             Delta: &v,
         })
     }
@@ -310,7 +311,7 @@ func (m *MemStorage) Load() error {
     }
     
     // Декодируем JSON
-    var metrics []Metrics
+    var metrics []models.Metrics
     if err := json.Unmarshal(data, &metrics); err != nil {
         // Если файл поврежден, создаем новый
         m.logger.Warn("Failed to parse metrics file, starting fresh", zap.Error(err))
@@ -323,12 +324,12 @@ func (m *MemStorage) Load() error {
     
     for _, metric := range metrics {
         switch metric.MType {
-        case Gauge:
+        case models.Gauge:
             if metric.Value != nil {
                 m.gauges[metric.ID] = *metric.Value
                 gaugesLoaded++
             }
-        case Counter:
+        case models.Counter:
             if metric.Delta != nil {
                 m.counters[metric.ID] = *metric.Delta
                 countersLoaded++
@@ -644,14 +645,14 @@ func (s *Server) updateMetricHandler(w http.ResponseWriter, r *http.Request) {
     }
 
     switch metricType {
-    case Gauge:
+    case models.Gauge:
         value, err := strconv.ParseFloat(metricValue, 64)
         if err != nil {
             http.Error(w, "Invalid gauge value", http.StatusBadRequest)
             return
         }
         s.storage.UpdateGauge(metricName, value)
-    case Counter:
+    case models.Counter:
         value, err := strconv.ParseInt(metricValue, 10, 64)
         if err != nil {
             http.Error(w, "Invalid counter value", http.StatusBadRequest)
@@ -686,14 +687,14 @@ func (s *Server) getMetricValueHandler(w http.ResponseWriter, r *http.Request) {
 	var value string
 
 	switch metricType {
-	case Gauge:
+	case models.Gauge:
 		val, err := s.storage.GetGauge(metricName)
 		if err != nil {
 			http.Error(w, "Metric not found", http.StatusNotFound)
 			return
 		}
 		value = strconv.FormatFloat(val, 'f', -1, 64)
-	case Counter:
+	case models.Counter:
 		val, err := s.storage.GetCounter(metricName)
 		if err != nil {
 			http.Error(w, "Metric not found", http.StatusNotFound)
@@ -728,7 +729,7 @@ func (s *Server) updateJSONHandler(w http.ResponseWriter, r *http.Request) {
     defer r.Body.Close()
 
     // Декодируем JSON
-    var metric Metrics
+    var metric models.Metrics
     if err := json.Unmarshal(body, &metric); err != nil {
         http.Error(w, "Invalid JSON format", http.StatusBadRequest)
         return
@@ -740,20 +741,20 @@ func (s *Server) updateJSONHandler(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    if metric.MType != Gauge && metric.MType != Counter {
+    if metric.MType != models.Gauge && metric.MType != models.Counter {
         http.Error(w, "Invalid metric type", http.StatusBadRequest)
         return
     }
 
     // Обновляем метрику
     switch metric.MType {
-    case Gauge:
+    case models.Gauge:
         if metric.Value == nil {
             http.Error(w, "Value field is required for gauge metric", http.StatusBadRequest)
             return
         }
         s.storage.UpdateGauge(metric.ID, *metric.Value)
-    case Counter:
+    case models.Counter:
         if metric.Delta == nil {
             http.Error(w, "Delta field is required for counter metric", http.StatusBadRequest)
             return
@@ -795,7 +796,7 @@ func (s *Server) getValueJSONHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	// Декодируем JSON
-	var requestMetric Metrics
+	var requestMetric models.Metrics
 	if err := json.Unmarshal(body, &requestMetric); err != nil {
 		http.Error(w, "Invalid JSON format", http.StatusBadRequest)
 		return
@@ -807,26 +808,26 @@ func (s *Server) getValueJSONHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if requestMetric.MType != Gauge && requestMetric.MType != Counter {
+	if requestMetric.MType != models.Gauge && requestMetric.MType != models.Counter {
 		http.Error(w, "Invalid metric type", http.StatusBadRequest)
 		return
 	}
 
 	// Получаем значение метрики
-	responseMetric := Metrics{
+	responseMetric := models.Metrics{
 		ID:    requestMetric.ID,
 		MType: requestMetric.MType,
 	}
 
 	switch requestMetric.MType {
-	case Gauge:
+	case models.Gauge:
 		value, err := s.storage.GetGauge(requestMetric.ID)
 		if err != nil {
 			http.Error(w, "Metric not found", http.StatusNotFound)
 			return
 		}
 		responseMetric.Value = &value
-	case Counter:
+	case models.Counter:
 		value, err := s.storage.GetCounter(requestMetric.ID)
 		if err != nil {
 			http.Error(w, "Metric not found", http.StatusNotFound)

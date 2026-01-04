@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	models "github.com/ponuch/service_metrics/internal/model"
 )
 
 // TestEnvironmentVariables тестирует чтение переменных окружения
@@ -224,7 +226,7 @@ func TestAgentFlagsDefaultValues(t *testing.T) {
 // TestAgentSendMetric тестирует отправку метрик
 func TestAgentSendMetric(t *testing.T) {
 	// Создаем тестовый сервер
-	var receivedRequests []Metrics
+	var receivedRequests []models.Metrics
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			t.Errorf("Expected POST request, got %s", r.Method)
@@ -266,7 +268,7 @@ func TestAgentSendMetric(t *testing.T) {
 			return
 		}
 
-		var metric Metrics
+		var metric models.Metrics
 		if err := json.Unmarshal(body, &metric); err != nil {
 			t.Errorf("Failed to decode request JSON: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
@@ -576,7 +578,7 @@ func TestCollectRuntimeMetrics(t *testing.T) {
 // TestAgentJSONSend тестирует отправку метрик в формате JSON
 func TestAgentJSONSend(t *testing.T) {
 	// Создаем тестовый сервер
-	receivedMetrics := make([]Metrics, 0)
+	receivedMetrics := make([]models.Metrics, 0)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			t.Errorf("Expected POST request, got %s", r.Method)
@@ -618,7 +620,7 @@ func TestAgentJSONSend(t *testing.T) {
 			return
 		}
 		
-		var metric Metrics
+		var metric models.Metrics
 		if err := json.Unmarshal(body, &metric); err != nil {
 			t.Errorf("Failed to decode request JSON: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
@@ -703,7 +705,7 @@ func TestAgentGzipCompression(t *testing.T) {
 		}
 		
 		// Проверяем JSON
-		var metric Metrics
+		var metric models.Metrics
 		if err := json.Unmarshal(body, &metric); err != nil {
 			t.Errorf("Failed to decode JSON: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
