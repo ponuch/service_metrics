@@ -281,15 +281,15 @@ func (a *Agent) sendMetricJSON(metricType, name string, value interface{}) error
 		body = bytes.NewBuffer(jsonData)
 	}
 
-	baseUrl, err := url.Parse(a.config.ServerURL)
+	baseURL, err := url.Parse(a.config.ServerURL)
 
 	if err != nil {
 		return fmt.Errorf("failed to parse server url: %w", err)
 	}
 
 	url := &url.URL{
-		Scheme: baseUrl.Scheme,
-		Host: baseUrl.Host,
+		Scheme: baseURL.Scheme,
+		Host: baseURL.Host,
 		Path: "update",
 	}
 	
@@ -362,7 +362,7 @@ func (a *Agent) sendMetricLegacy(metricType, name string, value interface{}) err
 	default:
 		return fmt.Errorf("unsupported metric type: %T", value)
 	}
-	url, err := buildUrl(a.config.ServerURL, metricType, name, valueStr)
+	url, err := buildURL(a.config.ServerURL, metricType, name, valueStr)
 
 	if err != nil {
 		return fmt.Errorf("failed to create url: %w", err)
@@ -389,8 +389,8 @@ func (a *Agent) sendMetricLegacy(metricType, name string, value interface{}) err
 	return nil
 }
 
-func buildUrl (serverURL, metricType, name, valueStr string) (string, error) {
-	baseUrl, err := url.Parse(serverURL)
+func buildURL (serverURL, metricType, name, valueStr string) (string, error) {
+	baseURL, err := url.Parse(serverURL)
 
 	if err != nil {
 		return "", err
@@ -400,9 +400,9 @@ func buildUrl (serverURL, metricType, name, valueStr string) (string, error) {
 	fixName := url.PathEscape(name)
 	fixValueStr := url.PathEscape(valueStr)
 
-	baseUrl.Path = path.Join(baseUrl.Path, "update", fixMetricType, fixName, fixValueStr)
+	baseURL.Path = path.Join(baseURL.Path, "update", fixMetricType, fixName, fixValueStr)
 	
-	return baseUrl.String(), nil
+	return baseURL.String(), nil
 
 }
 
