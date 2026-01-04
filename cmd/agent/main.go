@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"path"
 
 	"github.com/ponuch/service_metrics/internal/model"
 )
@@ -280,9 +281,19 @@ func (a *Agent) sendMetricJSON(metricType, name string, value interface{}) error
 		body = bytes.NewBuffer(jsonData)
 	}
 
-	url := fmt.Sprintf("%s/update", a.config.ServerURL)
+	baseUrl, err := url.Parse(a.config.ServerURL)
+
+	if err != nil {
+		return fmt.Errorf("failed to parse server url: %w", err)
+	}
+
+	url := &url.URL{
+		Scheme: baseUrl.Scheme,
+		Host: baseUrl.Host,
+		Path: "update",
+	}
 	
-	req, err := http.NewRequest("POST", url, body)
+	req, err := http.NewRequest("POST", url.String(), body)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -351,9 +362,11 @@ func (a *Agent) sendMetricLegacy(metricType, name string, value interface{}) err
 	default:
 		return fmt.Errorf("unsupported metric type: %T", value)
 	}
-	
-	url := fmt.Sprintf("%s/update/%s/%s/%s", 
-		a.config.ServerURL, metricType, name, valueStr)
+	url, err := buildUrl(a.config.ServerURL, metricType, name, valueStr)
+
+	if err != nil {
+		return fmt.Errorf("failed to create url: %w", err)
+	}
 	
 	req, err := http.NewRequest("POST", url, nil)
 	if err != nil {
@@ -374,6 +387,23 @@ func (a *Agent) sendMetricLegacy(metricType, name string, value interface{}) err
 	}
 	
 	return nil
+}
+
+func buildUrl (serverURL, metricType, name, valueStr string) (string, error) {
+	baseUrl, err := url.Parse(serverURL)
+
+	if err != nil {
+		return "", err
+	}
+
+	fixMetricType := url.PathEscape(metricType)
+	fixName := url.PathEscape(name)
+	fixValueStr := url.PathEscape(valueStr)
+
+	baseUrl.Path = path.Join(baseUrl.Path, "update", fixMetricType, fixName, fixValueStr)
+	
+	return baseUrl.String(), nil
+
 }
 
 // sendMetric отправляет одну метрику на сервер (использует новый JSON формат)

@@ -15,69 +15,6 @@ import (
 	models "github.com/ponuch/service_metrics/internal/model"
 )
 
-// TestEnvironmentVariables тестирует чтение переменных окружения
-// func TestEnvironmentVariables(t *testing.T) {
-// 	// Вспомогательная функция для тестирования с заданными переменными окружения
-// 	testWithEnv := func(t *testing.T, address, report, poll string,
-// 		expectedURL string, expectedReport, expectedPoll time.Duration) {
-
-// 		// Устанавливаем переменные окружения
-// 		if address != "" {
-// 			t.Setenv("ADDRESS", address)
-// 		} else {
-// 			os.Unsetenv("ADDRESS")
-// 		}
-
-// 		if report != "" {
-// 			t.Setenv("REPORT_INTERVAL", report)
-// 		} else {
-// 			os.Unsetenv("REPORT_INTERVAL")
-// 		}
-
-// 		if poll != "" {
-// 			t.Setenv("POLL_INTERVAL", poll)
-// 		} else {
-// 			os.Unsetenv("POLL_INTERVAL")
-// 		}
-
-// 		// Сбрасываем состояние флагов
-// 		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-
-// 		// Вызываем parseAgentFlags
-// 		cfg := parseAgentFlags()
-
-// 		if cfg.ServerURL != expectedURL {
-// 			t.Errorf("Expected server URL %s, got %s", expectedURL, cfg.ServerURL)
-// 		}
-
-// 		if cfg.ReportInterval != expectedReport {
-// 			t.Errorf("Expected report interval %v, got %v", expectedReport, cfg.ReportInterval)
-// 		}
-
-// 		if cfg.PollInterval != expectedPoll {
-// 			t.Errorf("Expected poll interval %v, got %v", expectedPoll, cfg.PollInterval)
-// 		}
-// 	}
-
-// 	// // Тест 1: Все переменные окружения установлены
-// 	// t.Run("All environment variables set", func(t *testing.T) {
-// 	// 	testWithEnv(t, "example.com:9090", "5", "1",
-// 	// 		"http://example.com:9090", 5*time.Second, 1*time.Second)
-// 	// })
-
-// 	// // Тест 2: Частично установленные переменные окружения
-// 	// t.Run("Partially set environment variables", func(t *testing.T) {
-// 	// 	testWithEnv(t, "", "15", "",
-// 	// 		"http://localhost:8080", 15*time.Second, 2*time.Second)
-// 	// })
-
-// 	// // Тест 3: Некорректные значения в переменных окружения
-// 	t.Run("Invalid environment values", func(t *testing.T) {
-// 		testWithEnv(t, "", "invalid", "-5",
-// 			"http://localhost:8080", 10*time.Second, 2*time.Second)
-// 	})
-// }
-
 // TestEnvironmentVariablesWithFlags тестирует приоритет флагов над переменными окружения
 func TestEnvironmentVariablesWithFlags(t *testing.T) {
 	// Вспомогательная функция
