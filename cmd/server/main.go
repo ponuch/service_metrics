@@ -25,11 +25,6 @@ import (
     "github.com/ponuch/service_metrics/internal/model"
 )
 
-// Типы метрик
-// const (
-// 	Gauge   = "gauge"
-// 	Counter = "counter"
-// )
 
 // Config конфигурация сервера
 type Config struct {
@@ -38,14 +33,6 @@ type Config struct {
     FileStoragePath string        // Путь к файлу сохранения
     Restore         bool          // Загружать ранее сохраненные значения
 }
-
-// Metrics структура для JSON API
-// type Metrics struct {
-// 	ID    string   `json:"id"`              // имя метрики
-// 	MType string   `json:"type"`            // параметр, принимающий значение gauge или counter
-// 	Delta *int64   `json:"delta,omitempty"` // значение метрики в случае передачи counter
-// 	Value *float64 `json:"value,omitempty"` // значение метрики в случае передачи gauge
-// }
 
 var t *template.Template
 var templateError error
@@ -313,8 +300,7 @@ func (m *MemStorage) Load() error {
     // Декодируем JSON
     var metrics []models.Metrics
     if err := json.Unmarshal(data, &metrics); err != nil {
-        // Если файл поврежден, создаем новый
-        m.logger.Warn("Failed to parse metrics file, starting fresh", zap.Error(err))
+        m.logger.Warn("Failed to parse metrics file", zap.Error(err))
         return nil
     }
     
