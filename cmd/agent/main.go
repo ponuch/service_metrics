@@ -8,8 +8,6 @@ import (
 
 func main() {
 	agentConfig := config.New()
-	// agent := NewAgent(agentConfig)
-	agent := mainagent.NewAgent(*agentConfig)
+	agent := agent.NewAgent(*agentConfig)
 	agent.Run()
-	// agent.Run()
 }
