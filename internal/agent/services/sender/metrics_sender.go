@@ -21,7 +21,7 @@ import (
 
 type MetricSender struct{
 	cfg config.AgentConfig
-	client  *http.Client
+	Client  *http.Client
 	logger *zap.Logger
 
 }
@@ -32,7 +32,7 @@ func NewSender(cfg config.AgentConfig, logger *zap.Logger) *MetricSender {
 						 logger}
 }
 
-func (s *MetricSender) sendMetricJSON(threshold int, serverURL, metricType, name string, value interface{}) error {
+func (s *MetricSender) sendMetricJSON(metricType, name string, value interface{}) error {
 	var metric models.Metrics
 	metric.ID = name
 	metric.MType = metricType
@@ -56,7 +56,7 @@ func (s *MetricSender) sendMetricJSON(threshold int, serverURL, metricType, name
 	var compressed bool
 	
 	// Проверяем размер данных и сжимаем если нужно
-	if len(jsonData) > threshold {
+	if len(jsonData) > s.cfg.CompressThreshold {
 		compressedData, err := compressData(jsonData)
 		if err != nil {
 			log.Printf("Failed to compress data: %v, sending uncompressed", err)
@@ -72,7 +72,7 @@ func (s *MetricSender) sendMetricJSON(threshold int, serverURL, metricType, name
 		body = bytes.NewBuffer(jsonData)
 	}
 
-	baseURL, err := url.Parse(serverURL)
+	baseURL, err := url.Parse(s.cfg.ServerURL)
 
 	if err != nil {
 		return fmt.Errorf("failed to parse server url: %w", err)
@@ -99,7 +99,7 @@ func (s *MetricSender) sendMetricJSON(threshold int, serverURL, metricType, name
 		req.Header.Set("Content-Encoding", "gzip")
 	}
 	
-	resp, err := s.client.Do(req)
+	resp, err := s.Client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
@@ -142,7 +142,7 @@ func (s *MetricSender) sendMetricJSON(threshold int, serverURL, metricType, name
 }
 
 // sendMetricLegacy отправляет одну метрику на сервер в старом формате
-func (s *MetricSender) sendMetricLegacy(serverURL, metricType, name string, value interface{}) error {
+func (s *MetricSender) SendMetricLegacy(serverURL, metricType, name string, value interface{}) error {
 	var valueStr string
 	
 	switch v := value.(type) {
@@ -167,7 +167,7 @@ func (s *MetricSender) sendMetricLegacy(serverURL, metricType, name string, valu
 	// Добавляем заголовок Accept-Encoding для получения сжатых ответов
 	req.Header.Set("Accept-Encoding", "gzip")
 	
-	resp, err := s.client.Do(req)
+	resp, err := s.Client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
@@ -198,8 +198,8 @@ func buildURL (serverURL, metricType, name, valueStr string) (string, error) {
 }
 
 // sendMetric отправляет одну метрику на сервер (использует новый JSON формат)
-func (s *MetricSender) sendMetric(threshold int, serverURL, metricType, name string, value interface{}) error {
-	return s.sendMetricJSON(threshold, serverURL, metricType, name, value)
+func (s *MetricSender) SendMetric(metricType, name string, value interface{}) error {
+	return s.sendMetricJSON(metricType, name, value)
 }
 
 // sendMetrics отправляет все метрики на сервер
@@ -210,7 +210,7 @@ func (s *MetricSender) SendMetrics(gauges map[string]float64, counters map[strin
 	sentCount := 0
 
 	for name, value := range gauges {
-		if err := s.sendMetric(threshold, serverURL, "gauge", name, value); err != nil {
+		if err := s.SendMetric("gauge", name, value); err != nil {
 			log.Printf("Failed to send metric %s: %v", name, err)
 		} else {
 			sentCount++
@@ -218,7 +218,7 @@ func (s *MetricSender) SendMetrics(gauges map[string]float64, counters map[strin
 	}
 
 	for name, value := range counters {
-		if err := s.sendMetric(threshold, serverURL, "counter", name, value); err != nil {
+		if err := s.SendMetric("counter", name, value); err != nil {
 			log.Printf("Failed to send metric %s: %v", name, err)
 		} else {
 			sentCount++

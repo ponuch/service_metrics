@@ -45,10 +45,10 @@ func (a *Agent) collectMetrics() {
 	a.storage.StoreCountersMetrics(a.collector.CollectCustomMetrics())
 }
 
-func (a *Agent) sendMetrics() {
-	a.sender.SendMetrics(a.storage.GetGauges(), a.storage.GetCounters(),
-	 					 a.config.ServerURL, a.config.CompressThreshold)
-}
+// func (a *Agent) sendMetrics() {
+// 	a.sender.SendMetrics(a.storage.GetGauges(), a.storage.GetCounters(),
+// 	 					 a.config.ServerURL, a.config.CompressThreshold)
+// }
 
 // validateURL проверяет валидность URL
 func validateURL(rawURL string) error {
@@ -82,7 +82,8 @@ func (a *Agent) Run() {
 			log.Printf("Collected %d metrics at %v", allMetrics, time.Now().Format("15:04:05"))
 
 		case <-reportTicker.C:
-			a.sendMetrics()
+			a.sender.SendMetrics(a.storage.GetGauges(), a.storage.GetCounters(),
+	 					 a.config.ServerURL, a.config.CompressThreshold)
 		}
 	}
 }
