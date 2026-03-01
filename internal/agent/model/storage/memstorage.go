@@ -50,10 +50,10 @@ func (storage *MemStorage) GetCounters() map[string]int64 {
 }
 
 // Clear очищает хранилище
-func (s *MemStorage) Clear() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (storage *MemStorage) Clear() {
+	storage.mu.Lock()
+	defer storage.mu.Unlock()
 	
-	s.gauges = make(map[string]float64)
-	s.counters = make(map[string]int64)
+	storage.gauges = make(map[string]float64)
+	storage.counters = make(map[string]int64)
 }
