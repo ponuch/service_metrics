@@ -858,23 +858,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.router.ServeHTTP(w, r)
 }
 
+
 func main() {
-    // Инициализация логгера zap
     logger, err := zap.NewProduction()
     if err != nil {
         log.Fatalf("Failed to create logger: %v", err)
     }
     defer logger.Sync()
     
-    // Заменяем стандартный логгер на zap
     zap.ReplaceGlobals(logger)
     
     cfg := parseServerFlags()
     
-    // Создаем хранилище
     storage := NewMemStorage(cfg.FileStoragePath, logger)
     
-    // Загружаем метрики из файла если нужно
+    // Грузим метрики из файла если нужно
     if cfg.Restore {
         if err := storage.Load(); err != nil {
             logger.Error("Failed to load metrics from file", 
@@ -887,14 +885,14 @@ func main() {
     
     server := NewServer(storage, storage, cfg, logger)
     
-    // Запускаем горутину для сохранения метрик
+    // Запуск горутины для сохранения метрик
     server.startSaver()
     
-    // Обработка сигналов для graceful shutdown
+    // Канал для сигналов ОС
     quit := make(chan os.Signal, 1)
     signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
     
-    // Создаем HTTP сервер с таймаутами
+    
     httpServer := &http.Server{
         Addr:         cfg.Addr,
         Handler:      server,
@@ -924,20 +922,24 @@ func main() {
     case sig := <-quit:
         logger.Info("Shutting down server", zap.String("signal", sig.String()))
         
-        // Даем время на завершение обработки запросов
+        // Создаем контекст с таймаутом для graceful shutdown
         ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
         defer cancel()
         
-        // Останавливаем сервер
-        server.Stop()
+        // Останавливаем внутренние горутины сервера (сохранение метрик)
+        if err := server.Stop(ctx); err != nil {
+            logger.Error("Server stop error", zap.Error(err))
+        }
         
+        // Останавливаем HTTP сервер
         if err := httpServer.Shutdown(ctx); err != nil {
-            logger.Error("Server forced to shutdown", zap.Error(err))
+            logger.Error("HTTP server forced to shutdown", zap.Error(err))
         }
         
         logger.Info("Server exited properly")
     }
 }
+
 
 // startSaver запускает горутину для периодического сохранения метрик
 func (s *Server) startSaver() {
@@ -980,9 +982,22 @@ func (s *Server) startSaver() {
     }()
 }
 
-// Stop останавливает сервер
-func (s *Server) Stop() {
+// стопим сервер
+func (s *Server) Stop(ctx context.Context) error {
     close(s.stopChan)
-    s.wg.Wait()
-    s.logger.Info("Server stopped")
+    
+    done := make(chan struct{})
+    go func() {
+        s.wg.Wait()
+        close(done)
+    }()
+    
+    select {
+    case <-done:
+        s.logger.Info("All server goroutines finished")
+        return nil
+    case <-ctx.Done():
+        s.logger.Warn("Timeout waiting for server goroutines to finish")
+        return ctx.Err()
+    }
 }
