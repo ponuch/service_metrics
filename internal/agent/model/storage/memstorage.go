@@ -20,10 +20,14 @@ func NewMemStorage() *MemStorage {
 }
 
 func (storage *MemStorage) StoreGaugesMetrics(gauges map[string]float64) {
+	storage.mu.Lock()
+	defer storage.mu.Unlock()
 	storage.gauges = gauges
 }
 
 func (storage *MemStorage) StoreCountersMetrics(counters map[string]int64) {
+	storage.mu.Lock()
+	defer storage.mu.Unlock()
 	storage.counters = counters
 }
 

@@ -5,7 +5,9 @@ import (
 	"runtime"
 )
 
-type MetricCollector struct {}
+type MetricCollector struct {
+	pollCount int64
+}
 
 // NewCollector создает новый коллектор
 func NewCollector() *MetricCollector {
@@ -55,11 +57,7 @@ func (mc *MetricCollector) CollectRuntimeMetrics() map[string]float64 {
 func (mc *MetricCollector) CollectCustomMetrics() map[string]int64 {
 	counters := make(map[string]int64)
 
-	// PollCount - счетчик обновлений
-	if count, ok := counters["PollCount"]; ok {
-		counters["PollCount"] = count + 1
-	} else {
-		counters["PollCount"] = int64(1)
-	}
+	mc.pollCount++
+	counters["PollCount"] = mc.pollCount
 	return counters
 }

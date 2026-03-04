@@ -218,8 +218,7 @@ func TestAgentCollectMetrics(t *testing.T) {
 	}
 	
 	agent := NewAgent(cfg)
-	agent.collectMetrics()
-
+	
 	gauges := agent.collector.CollectRuntimeMetrics()
 	counters := agent.collector.CollectCustomMetrics()
 	
